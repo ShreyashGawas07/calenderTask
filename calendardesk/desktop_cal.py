@@ -5,6 +5,7 @@ import tkinter as tk
 from datetime import date, datetime, timedelta
 
 from . import model, theme, winapi
+from .anim import TickAnimation
 from .holidays_in import holiday_name
 from .pinned import PinnedWindow
 
@@ -31,6 +32,8 @@ class DesktopCalendar(PinnedWindow):
         self.hits = []
         self.quick = None
         self.glow = []          # (item, strength, cell colour) for the pulsing today border
+        self.animating = set()   # (task id, day) whose tick animation is playing; clicks on them wait
+        self._task_items = {}    # (task id, day) -> (checkbox item, title item) for the animation
         self._pulse_job = None
         self._glow_steady = True  # rings currently show their full-strength (unanimated) colour
         self.zoom = 1.0
@@ -84,6 +87,7 @@ class DesktopCalendar(PinnedWindow):
         c.configure(bg=theme.BG)
         self.win.configure(bg=theme.BG)
         self.hits, self.glow = [], []
+        self._task_items = {}
         W, H = c.winfo_width(), c.winfo_height()
         if W < 50 or H < 50:
             return
@@ -241,8 +245,15 @@ class DesktopCalendar(PinnedWindow):
             self.hits.append((bb[0] - P(2), y, bb[2] + P(1), y + line_h, "check", day, t))
             label = (t["time"] + " " if t.get("time") else "") + t["title"]
             tx = bb[2] + P(3)
-            c.create_text(tx, y, anchor="nw", fill=color, font=f["strike"] if done else f["normal"],
-                          text=theme.fit(f["normal"], label, x1 - tx - P(3)))
+            ticked, total = model.progress(t, day)
+            count = f"{ticked}/{total}" if total else ""
+            count_w = f["small"].measure(" " + count) if count else 0
+            title = c.create_text(tx, y, anchor="nw", fill=color, font=f["strike"] if done else f["normal"],
+                                  text=theme.fit(f["normal"], label, x1 - tx - P(3) - count_w))
+            if count:
+                c.create_text(c.bbox(title)[2] + P(3), y + P(1), anchor="nw", text=count, font=f["small"],
+                              fill=theme.DONE if done else (theme.ACCENT if ticked == total else theme.MUTED))
+            self._task_items[(t["id"], day)] = (box, title)
             self.hits.append((tx, y, x1, y + line_h, "task", day, t))
             y += line_h
         hidden = len(tasks) - len(shown)
@@ -296,13 +307,34 @@ class DesktopCalendar(PinnedWindow):
             return
         kind, day, t = h[4:]
         if kind == "check":
-            self.app.toggle_done(t, day)
+            self._animate_tick(t, day)
         elif kind in ("task", "day"):
             # Wait briefly: if a double-click follows, it adds a task instead.
             action = (lambda: self.app.edit_task(task=t, day=day)) if kind == "task" else \
                      (lambda: self.app.open_day(day))
             self._cancel_click()
             self._click_job = self.win.after(CLICK_DELAY_MS, self._run_click, action)
+
+    def _animate_tick(self, t, day):
+        """Play the tick (or untick) animation, then save. Clicks on it meanwhile are ignored."""
+        key = (t["id"], day)
+        if key in self.animating:
+            return
+        ticking = not model.is_done(t, day)
+        items = self._task_items.get(key)
+        if not items:
+            self.app.toggle_done(t, day, ticking)
+            return
+        self.animating.add(key)
+
+        def finished():
+            self.animating.discard(key)
+            self.app.toggle_done(t, day, ticking)
+        box = self.canvas.bbox(items[0])
+        side = min(box[2] - box[0], box[3] - box[1]) - 2
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        TickAnimation(self.canvas, (cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2), items[1],
+                      theme.ACCENT, theme.DONE, finished, ticking).start()
 
     def _run_click(self, action):
         self._click_job = None

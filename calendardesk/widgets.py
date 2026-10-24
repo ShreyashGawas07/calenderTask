@@ -4,6 +4,7 @@ import winsound
 from datetime import date
 
 from . import model, theme, winapi
+from .anim import TickAnimation
 from .desktop_cal import WEEKDAYS, shift_month
 from .holidays_in import holiday_name
 from .pinned import PinnedWindow
@@ -208,6 +209,7 @@ class MiniCalendar(PinnedWindow):
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<MouseWheel>", lambda e: self.go(-1 if e.delta > 0 else 1))
         self.hits, self._drag = [], None
+        self.animating, self._task_items = set(), {}
 
     def go(self, delta):
         self.year, self.month = shift_month(self.year, self.month, delta)
@@ -217,7 +219,7 @@ class MiniCalendar(PinnedWindow):
         c = self.canvas
         c.delete("all")
         c.configure(bg=theme.BG, highlightbackground=theme.GRID)
-        self.hits = []
+        self.hits, self._task_items = [], {}
         W, H = c.winfo_width(), c.winfo_height()
         f = theme.fonts(max(8, self.app.settings["font_size"] - 1))
         today = self.app.today()
@@ -270,8 +272,15 @@ class MiniCalendar(PinnedWindow):
             box = c.create_text(10, y, anchor="nw", text="☑" if done else "☐", fill=color, font=f["normal"])
             self.hits.append((*self._pad(c.bbox(box)), "check", t))
             text = (t["time"] + " " if t.get("time") else "") + t["title"]
-            c.create_text(28, y, anchor="nw", text=theme.fit(f["normal"], text, W - 38), fill=color,
-                          font=f["strike"] if done else f["normal"])
+            ticked, total = model.progress(t, self.selected)
+            count = f"{ticked}/{total}" if total else ""
+            count_w = f["small"].measure(" " + count) if count else 0
+            title = c.create_text(28, y, anchor="nw", text=theme.fit(f["normal"], text, W - 38 - count_w),
+                                  fill=color, font=f["strike"] if done else f["normal"])
+            if count:
+                c.create_text(c.bbox(title)[2] + 3, y + 1, anchor="nw", text=count, font=f["small"],
+                              fill=theme.DONE if done else (theme.ACCENT if ticked == total else theme.MUTED))
+            self._task_items[t["id"]] = (box, title)
             y += 20
 
     @staticmethod
@@ -294,7 +303,27 @@ class MiniCalendar(PinnedWindow):
             self.selected = h[5]
             self.redraw()
         elif h[4] == "check":
-            self.app.toggle_done(h[5], self.selected)
+            self._animate_tick(h[5], self.selected)
+
+    def _animate_tick(self, t, day):
+        key = (t["id"], day)
+        items = self._task_items.get(t["id"])
+        if key in self.animating:
+            return
+        ticking = not model.is_done(t, day)
+        if not items:
+            self.app.toggle_done(t, day, ticking)
+            return
+        self.animating.add(key)
+
+        def finished():
+            self.animating.discard(key)
+            self.app.toggle_done(t, day, ticking)
+        x0, y0, x1, y1 = self.canvas.bbox(items[0])
+        side = min(x1 - x0, y1 - y0) - 2
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        TickAnimation(self.canvas, (cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2), items[1],
+                      theme.ACCENT, theme.DONE, finished, ticking).start()
 
     def _double(self, e):
         h = self._hit(e)

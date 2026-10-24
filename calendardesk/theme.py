@@ -1,5 +1,6 @@
 """Colours and fonts. `apply(settings)` swaps the module-level values, so every window
 reads the current theme the next time it draws."""
+import tkinter as tk
 import tkinter.font as tkfont
 
 PRESETS = {
@@ -85,7 +86,8 @@ _font_cache = {}
 
 
 def _font(size, **kw):
-    key = (FAMILY, size, tuple(sorted(kw.items())))
+    # Fonts belong to one Tk interpreter; key by it so a second App in one process gets fresh ones.
+    key = (id(tk._default_root), FAMILY, size, tuple(sorted(kw.items())))
     if key not in _font_cache:
         _font_cache[key] = tkfont.Font(family=FAMILY, size=size, **kw)
     return _font_cache[key]

@@ -3,7 +3,7 @@
     .venv\\Scripts\\python tests\\perf_check.py on|off [tasks]
 
 Starts the app on a temporary data folder with today's glow on or off, lets it idle on the
-wallpaper and measures CPU over 20 s, thread count, working set and child processes.
+wallpaper and measures CPU (in cycles) over 20 s, thread count, working set and child processes.
 Exits 1 if CPU >= 0.1 % of one core, more than 3 threads, any child process, or > 70 MB.
 """
 import ctypes
@@ -38,6 +38,24 @@ class PROCESSENTRY32W(ctypes.Structure):
                 ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
                 ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
                 ("szExeFile", wintypes.WCHAR * 260)]
+
+
+def _cycles():
+    k32 = ctypes.WinDLL("kernel32")
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.QueryProcessCycleTime.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_ulonglong)]
+    n = ctypes.c_ulonglong()
+    k32.QueryProcessCycleTime(k32.GetCurrentProcess(), ctypes.byref(n))
+    return n.value
+
+
+def cycles_per_second():
+    """CPU cycles one busy core runs per second (time.process_time ticks in 15.6 ms steps on Windows,
+    far too coarse for an app that is idle, so the check counts cycles instead)."""
+    c0, t0 = _cycles(), time.perf_counter()
+    while time.perf_counter() - t0 < 0.3:
+        pass
+    return (_cycles() - c0) / (time.perf_counter() - t0)
 
 
 def working_set_mb():
@@ -78,13 +96,21 @@ def main():
     app = App(store, tray=True)
     result = {}
 
+    def crashed(*exc):  # never hang on an error inside a timer callback
+        import traceback
+        traceback.print_exception(*exc)
+        app.quit()
+        sys.exit(2)
+    app.root.report_callback_exception = crashed
+
     def start():
-        result["t0"] = (time.process_time(), time.monotonic())
+        result["hz"] = cycles_per_second()
+        result["t0"] = (_cycles(), time.monotonic())
         app.root.after(MEASURE_S * 1000, stop)
 
     def stop():
         cpu0, wall0 = result["t0"]
-        result["cpu"] = 100 * (time.process_time() - cpu0) / (time.monotonic() - wall0)
+        result["cpu"] = 100 * (_cycles() - cpu0) / result["hz"] / (time.monotonic() - wall0)
         result["threads"] = threading.active_count()
         result["mem"] = working_set_mb()
         result["kids"] = child_processes()
