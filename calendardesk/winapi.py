@@ -106,6 +106,13 @@ def foreground_is_ours():
     return pid.value == os.getpid()
 
 
+def desktop_is_foreground():
+    """True when the desktop itself (the wallpaper) is the active window."""
+    buf = ctypes.create_unicode_buffer(32)
+    user32.GetClassNameW(user32.GetForegroundWindow(), buf, 32)
+    return buf.value in ("Progman", "WorkerW")
+
+
 class HotkeyThread(threading.Thread):
     """Registers Ctrl+Alt+<key> and calls `on_press()` (from this thread) when it is pressed."""
 

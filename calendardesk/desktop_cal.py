@@ -4,7 +4,7 @@ import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 
-from . import model, theme
+from . import model, theme, winapi
 from .holidays_in import holiday_name
 from .pinned import PinnedWindow
 
@@ -31,6 +31,8 @@ class DesktopCalendar(PinnedWindow):
         self.hits = []
         self.quick = None
         self.glow = []          # (item, strength, cell colour) for the pulsing today border
+        self._pulse_job = None
+        self._glow_steady = True  # rings currently show their full-strength (unanimated) colour
         self.zoom = 1.0
         self._click_job = None
         self.scale = self.win.winfo_fpixels("1i") / 96.0
@@ -44,7 +46,6 @@ class DesktopCalendar(PinnedWindow):
         locked = lambda: self.app.settings["locked"]
         self.make_draggable(c, on_done=self._save_geometry, locked=locked, tag="drag")
         self.make_resizable(c, on_done=self._save_geometry, locked=locked, tag="grip")
-        self._pulse()
 
     @staticmethod
     def _default_geometry(root):
@@ -158,6 +159,9 @@ class DesktopCalendar(PinnedWindow):
         c.create_polygon(W, H - g, W, H, W - g, H, fill=theme.MUTED, outline="", tags=("grip",))
         c.tag_bind("grip", "<Enter>", lambda e: c.config(cursor="size_nw_se"))
         c.tag_bind("grip", "<Leave>", lambda e: c.config(cursor=""))
+        self._glow_steady = True
+        if self.glow and not self._pulse_job:
+            self._pulse_job = self.win.after(1000, self._pulse)
 
     def _draw_cell(self, day, x0, y0, cw, rh, line_h, f, today, current_week):
         c, P, s = self.canvas, self.px, self.app.settings
@@ -180,8 +184,10 @@ class DesktopCalendar(PinnedWindow):
             # Rings fading inward from the border; _pulse() animates their brightness.
             for i in range(1, GLOW_RINGS + 1):
                 inset = P(1) + i
-                item = c.create_rectangle(x0 + inset, y0 + inset, x1 - inset, y1 - inset, outline=fill, width=1)
-                self.glow.append((item, 1 - i / (GLOW_RINGS + 1), fill))
+                strength = 1 - i / (GLOW_RINGS + 1)
+                item = c.create_rectangle(x0 + inset, y0 + inset, x1 - inset, y1 - inset, width=1,
+                                          outline=theme.mix(theme.ACCENT, fill, strength))
+                self.glow.append((item, strength, fill))
 
         weekend = day.weekday() >= 5
         num_color = theme.DIM if not in_month else (theme.WEEKEND if weekend else plain)
@@ -246,13 +252,29 @@ class DesktopCalendar(PinnedWindow):
             bb = c.bbox(item)
             self.hits.append((bb[0], bb[1], bb[2], bb[3], "day", day, None))
 
+    def to_front(self, focus=True):
+        super().to_front(focus)
+        if self.glow:  # start breathing now instead of at the next one-second check
+            if self._pulse_job:
+                self.win.after_cancel(self._pulse_job)
+            self._pulse()
+
     def _pulse(self):
-        """Slowly breathe the glow around today (about 12 small colour updates a second)."""
-        if self.glow and self.win.winfo_exists():
+        """Breathe the glow around today, but only while someone can see it (calendar raised or the
+        desktop in front). Otherwise draw it steady and look again in a second; with no glow, stop."""
+        self._pulse_job = None
+        if not self.glow or not self.win.winfo_exists():
+            return
+        if self.front or winapi.desktop_is_foreground():
             wave = 0.5 + 0.5 * math.sin(time.monotonic() * 2 * math.pi / 2.4)
+            delay = 80
+        else:
+            wave, delay = 1.0, 1000
+        if wave != 1.0 or not self._glow_steady:
             for item, strength, fill in self.glow:
                 self.canvas.itemconfigure(item, outline=theme.mix(theme.ACCENT, fill, strength * (0.35 + 0.65 * wave)))
-        self.win.after(80 if self.glow else 1000, self._pulse)
+        self._glow_steady = wave == 1.0
+        self._pulse_job = self.win.after(delay, self._pulse)
 
     def _button(self, item, action):
         c = self.canvas

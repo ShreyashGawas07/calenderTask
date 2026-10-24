@@ -1,4 +1,4 @@
-"""Notification-area icon. Runs on its own thread; every action is posted to the app queue."""
+"""Notification-area icon. Runs on its own thread; every action is handed to the Tk thread with App.post."""
 import threading
 
 import pystray

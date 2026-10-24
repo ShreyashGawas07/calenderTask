@@ -31,6 +31,7 @@ class PinnedWindow:
         else:
             winapi.raise_window(self.hwnd)
         self.front = True
+        self.app.watch_raised()
 
     def to_back(self):
         winapi.send_to_bottom(self.hwnd)

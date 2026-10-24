@@ -1,7 +1,6 @@
 """Application controller: owns the data, the windows, the hotkey, the tray and the reminder clock."""
 import copy
 import os
-import queue
 import traceback
 import tkinter as tk
 from datetime import date, datetime, timedelta
@@ -25,7 +24,6 @@ class App:
         self.root.title("CalendarDesk")
         self.root.report_callback_exception = self._report_error
         self.store = store or Store()
-        self.queue = queue.Queue()
         self.views = []
         self.notes, self.cards = {}, {}
         self.mini = None
@@ -46,9 +44,9 @@ class App:
         self.tray = None
         if tray:
             from .tray import Tray
-            self.tray = Tray(self.queue.put)
+            self.tray = Tray(self.post)
             self.tray.start()
-        self.root.after(100, self._poll)
+        self._settling = False
         self.root.after(2000, self._tick)
 
     # -- basics ------------------------------------------------------------
@@ -98,7 +96,7 @@ class App:
     def _start_hotkey(self):
         if self.hotkey:
             self.hotkey.stop()
-        self.hotkey = winapi.HotkeyThread(self.settings["hotkey"], lambda: self.queue.put("toggle_front"))
+        self.hotkey = winapi.HotkeyThread(self.settings["hotkey"], lambda: self.post("toggle_front"))
         self.hotkey.start()
         self.hotkey.registered.wait(2)
         if not self.hotkey.ok:
@@ -106,24 +104,24 @@ class App:
                 "CalendarDesk", f"Ctrl+Alt+{self.settings['hotkey']} is already used by another program.\n"
                                 "Pick a different letter in Settings."))
 
-    def _poll(self):
+    def post(self, action):
+        """Run a named action on the Tk thread. Safe to call from the hotkey and tray threads."""
         try:
-            while True:
-                action = self.queue.get_nowait()
-                handler = {
-                    "toggle_front": self.toggle_front, "toggle_mini": self.toggle_mini,
-                    "new_task": lambda: self.edit_task(day=self.today()), "new_note": self.new_note,
-                    "new_countdown": self.edit_countdown, "show_all": self.show_all,
-                    "countdowns": self.manage_countdowns, "search": self.search,
-                    "export": self.export, "settings": self.settings_dialog, "quit": self.quit,
-                    "undo_settings": self.undo_settings,
-                }.get(action)
-                if handler:
-                    handler()
-        except queue.Empty:
-            pass
-        self._settle()
-        self.root.after(100, self._poll)
+            self.root.after(0, self._run_action, action)
+        except RuntimeError:
+            pass  # the app is shutting down
+
+    def _run_action(self, action):
+        handler = {
+            "toggle_front": self.toggle_front, "toggle_mini": self.toggle_mini,
+            "new_task": lambda: self.edit_task(day=self.today()), "new_note": self.new_note,
+            "new_countdown": self.edit_countdown, "show_all": self.show_all,
+            "countdowns": self.manage_countdowns, "search": self.search,
+            "export": self.export, "settings": self.settings_dialog, "quit": self.quit,
+            "undo_settings": self.undo_settings,
+        }.get(action)
+        if handler:
+            handler()
 
     def main_menu(self, parent):
         m = tk.Menu(parent, tearoff=0)
@@ -158,10 +156,23 @@ class App:
         for w in self._pinned():
             w.to_back()
 
+    def watch_raised(self):
+        """Start checking (every 400 ms) whether raised desktop windows should drop back."""
+        if not self._settling:
+            self._settling = True
+            self.root.after(400, self._settle)
+
     def _settle(self):
-        """Once another app is in front, put raised desktop windows back onto the wallpaper."""
-        if any(w.front for w in self._pinned()) and not winapi.foreground_is_ours():
+        """Once another app is in front, put raised desktop windows back onto the wallpaper.
+        Runs only while something is raised, so an idle calendar costs nothing."""
+        if not any(w.front for w in self._pinned()):
+            self._settling = False
+            return
+        if not winapi.foreground_is_ours():
             self.all_to_back()
+            self._settling = False
+            return
+        self.root.after(400, self._settle)
 
     def preview_opacity(self, value):
         self.calendar.set_opacity(value)
