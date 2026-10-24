@@ -208,3 +208,20 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(model.progress(t, d), (0, 0))
         model.set_task_done(t, d, True)
         self.assertTrue(model.is_done(t, d))
+
+
+class ExportTests(unittest.TestCase):
+    def test_checklist_column(self):
+        from openpyxl import load_workbook
+        from calendardesk.export import export_xlsx
+        d = date(2026, 3, 2)
+        t = model.new_task("Report", d)
+        t["items"] = [model.new_item(x) for x in "abc"]
+        model.set_item_done(t, t["items"][0], d, True)
+        data = {"tasks": [t], "countdowns": [], "notes": []}
+        path = os.path.join(tempfile.mkdtemp(), "out.xlsx")
+        export_xlsx(data, path, d)
+        ws = load_workbook(path)["Tasks"]
+        header = [c.value for c in ws[1]]
+        col = header.index("Checklist")
+        self.assertEqual(ws[2][col].value, "1/3: a ✓; b; c")

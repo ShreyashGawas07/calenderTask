@@ -18,11 +18,11 @@ anything to startup. To start it with Windows, tick the box in Settings.
 | To… | Do this |
 |---|---|
 | Bring the calendar in front of other windows | `Ctrl+Alt+C` (change the letter in Settings); press it again or click another app to send it back |
-| Add a task fast | Double-click anywhere in a day, type, press Enter |
+| Add a task fast | Double-click anywhere in a day, type, press Enter. Smart typing understands times, dates, repeats and reminders: `call mom 7pm tomorrow`, `gym every mon and thu 7am`, `rent 1st every month`, `pay bill 6pm!` (`!` or `remind me` = reminder). A line under the box shows what it understood |
 | Add a task with time, reminder, repeat or colour | **+ Task**, or right-click a day → *Add task…* |
 | Edit a task | Click it once (or right-click → *Edit task…*) |
-| Tick a task done | Click its ☐ box (done tasks move to the end of the day) |
-| See everything on a day | Click the day number or **+N more** |
+| Tick a task done | Click its ☐ box: it animates, then moves to the end of the day |
+| See and edit everything on a day | Click the day number or **+N more** to open the day panel. There you can tick tasks, edit titles in place and add checklist items (the calendar shows `1/3`). Notes support **• List**, **1. List** and **B** (or Ctrl+B); Enter continues a list, and Enter on an empty item ends it. ⋮ moves or deletes a task, and ▸ opens a task that has no items or notes yet |
 | Change month | ‹ › arrows or the mouse wheel; **Today** jumps back |
 | Colour a date | Right-click the day → *Date colour* |
 | Countdown or anniversary card | ☰ menu → *New countdown…*, or right-click a day → *Countdown to this date…* |
@@ -54,8 +54,13 @@ Data is stored only on this PC, in `%APPDATA%\CalendarDesk\data.json`, with a da
 
 Then delete this folder.
 
+It is built to keep the PC fast: one process, no polling, and about 0.07 % of one CPU core while idle
+(`tests\perf_check.py` measures it).
+
 ## Tests
 
 ```
 .venv\Scripts\python -m unittest discover -s tests -t .
+.venv\Scripts\python tests\ui_day_panel.py
+.venv\Scripts\python tests\perf_check.py on
 ```
