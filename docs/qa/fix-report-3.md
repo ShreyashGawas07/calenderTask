@@ -20,7 +20,7 @@ All changes are in the working tree (not committed). The regression tests are in
 
 ## Memory check (500 calendar redraws, 30 tasks, temp data folder)
 
-Script: `C:\Users\shreyash\AppData\Local\Temp\claude\qa-fix3\mem.py`. For the HEAD baseline I used `git archive HEAD` extracted to `qa-fix3\old`.
+Script: `%TEMP%\claude\qa-fix3\mem.py`. For the HEAD baseline I used `git archive HEAD` extracted to `qa-fix3\old`.
 
 ```
 HEAD 9af1afb: Tcl commands 211 -> 8711 (+8500); working set 51.7 -> 60.1 MB (+8.4); private 33.9 -> 41.8 MB (+7.9)

@@ -1,6 +1,6 @@
 # Verify report — round 1
 
-Verified against the uncommitted working tree (`git status`: 10 source files, 2 docs and 4 test files modified, plus untracked `docs/qa/` and `tests/test_day_panel.py`). I compared against an unmodified copy of HEAD, extracted read-only with `git archive HEAD | tar -x` into `%TEMP%\claude\qa-verify\old`. I did not stash, check out, reset or commit anything. All scratch scripts are in `C:\Users\shreyash\AppData\Local\Temp\claude\qa-verify`, every run used temp data folders, and every run was wrapped in `timeout`.
+Verified against the uncommitted working tree (`git status`: 10 source files, 2 docs and 4 test files modified, plus untracked `docs/qa/` and `tests/test_day_panel.py`). I compared against an unmodified copy of HEAD, extracted read-only with `git archive HEAD | tar -x` into `%TEMP%\claude\qa-verify\old`. I did not stash, check out, reset or commit anything. All scratch scripts are in `%TEMP%\claude\qa-verify`, every run used temp data folders, and every run was wrapped in `timeout`.
 
 "Fails on old code" means I ran the fixer's new test files against the HEAD copy of `calendardesk/` (in `qa-verify\oldnewtests`): 20 regression tests ran, with 16 FAIL and 2 ERROR. The only 2 that passed on old code are `test_slash_date_with_context` and `test_added_item_leaves_box_empty`, both of which the fixer describes as guards.
 

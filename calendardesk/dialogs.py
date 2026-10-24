@@ -1,12 +1,15 @@
 """Normal windowed dialogs: task editor, countdowns, search and settings (the day panel is in day_panel.py)."""
 import os
+import queue
 import re
+import threading
 import tkinter as tk
 from datetime import date, datetime, timedelta
 import tkinter.font as tkfont
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from . import model, shortcuts, theme, winapi
+from .backdrop import PLAY_MODES
 from .holidays_in import holiday_name
 from .shortcut_ui import ShortcutsTab
 
@@ -160,6 +163,12 @@ class TaskDialog(Dialog):
         e.grid(row=r, column=1, columnspan=3, sticky="we", pady=3)
         e.focus_set()
         r += 1
+        self.smart = None
+        if task is None:
+            # Smart typing, as in the calendar's quick-add box: "call mom 7am tomorrow" fills the form.
+            self.smart = ttk.Label(g, foreground="#1971c2")
+            self.smart.grid(row=r, column=1, columnspan=3, sticky="w")
+            r += 1
         ttk.Label(g, text="Date").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(g, textvariable=self.v_date, width=12).grid(row=r, column=1, sticky="w")
         ttk.Label(g, text="Time").grid(row=r, column=2, sticky="e", padx=(10, 4))
@@ -212,7 +221,40 @@ class TaskDialog(Dialog):
             ttk.Button(b, text="Delete", command=self.delete).pack(side="left")
         self.bind("<Return>", lambda e: None if isinstance(e.widget, tk.Text) else self.save())
         self._sync_repeat()
+        if task is None:
+            self.default_day = model.s2d(t["date"])
+            self._auto = self._form_state()  # what smart typing may overwrite: fields not edited by hand
+            self.watch_var(self.v_title, self._smart_typing)
         self.present()
+
+    def _form_state(self):
+        return {"date": self.v_date.get(), "time": self.v_time.get(), "remind": self.v_remind.get(),
+                "repeat": self.v_repeat.get(), "interval": self.v_interval.get(),
+                "days": tuple(v.get() for v in self.v_days)}
+
+    def _smart_typing(self):
+        """Fill date, time, reminder and repeat from the task text, leaving fields typed by hand alone."""
+        today = self.app.today()
+        p = model.parse_quick(self.v_title.get(), today)
+        day = p["date"] if (p["date"] != today or "Today" in p["found"]) else self.default_day
+        try:
+            now = self._form_state()
+        except tk.TclError:  # the interval box is half-typed
+            return
+        want = {"date": fmt_date(day), "time": p["time"] or "", "remind": p["remind"], "repeat": p["repeat"],
+                "interval": p["interval"], "days": tuple(i in p["weekdays"] for i in range(7))}
+        setters = {"date": self.v_date.set, "time": self.v_time.set, "remind": self.v_remind.set,
+                   "repeat": self.v_repeat.set, "interval": self.v_interval.set,
+                   "days": lambda days: [v.set(d) for v, d in zip(self.v_days, days)]}
+        for key, value in want.items():
+            if now[key] == self._auto[key] and value != now[key]:
+                setters[key](value)
+            if now[key] == self._auto[key]:
+                self._auto[key] = value
+        self._sync_repeat()
+        found = p["found"]
+        self.smart.configure(text=f"Understood: {' · '.join(found)}  →  saved as \"{p['title']}\""
+                             if found and p["title"] else "")
 
     def _sync_repeat(self):
         rep = self.v_repeat.get()
@@ -249,6 +291,10 @@ class TaskDialog(Dialog):
         except (ValueError, tk.TclError) as err:
             messagebox.showerror("Check the task", str(err), parent=self)
             return
+        if self.task is None:  # smart typing: "call mom 7am" is saved as "call mom"
+            parsed = model.parse_quick(title, self.app.today())
+            if parsed["found"] and parsed["title"]:
+                title = parsed["title"]
         t = self.task or model.new_task(title, day)
         rule_changed = self.task is not None and (
             t["date"] != model.d2s(day) or t.get("repeat") != self.v_repeat.get())
@@ -492,7 +538,11 @@ class SettingsDialog(Dialog):
             "today_tint": tk.BooleanVar(value=s["today_tint"]),
             "today_week": tk.BooleanVar(value=s["today_week"]),
             "today_progress": tk.BooleanVar(value=s["today_progress"]),
+            "background_dim": tk.DoubleVar(value=s["background_dim"]),
+            "background_play": tk.StringVar(value=PLAY_MODES.get(s["background_play"], PLAY_MODES["visible"])),
         }
+        self.background = s["background"]
+        self._import = None  # (queue, after job) while a chosen background is being prepared
         self.accent = s["accent"]
         self.colors = dict(s["colors"])
         self.terms = [dict(t) for t in s["school_terms"]]
@@ -555,6 +605,10 @@ class SettingsDialog(Dialog):
         values["font_family"] = values["font_family"].strip() or "Segoe UI"
         values["accent"], values["colors"] = self.accent, dict(self.colors)
         values["school_terms"] = [dict(t) for t in self.terms]
+        values["background"] = self.background
+        values["background_dim"] = round(min(0.9, max(0.0, float(values["background_dim"]))), 2)
+        values["background_play"] = next((k for k, label in PLAY_MODES.items()
+                                          if label == values["background_play"]), "visible")
         values["shortcuts"] = self.shortcuts.changed_values()
         values["global_shortcuts"] = self.shortcuts.global_on.get()
         return values
@@ -680,7 +734,96 @@ class SettingsDialog(Dialog):
                           ("today_week", "Light up this week's row and today's weekday"),
                           ("today_progress", "Bar showing how much of the day has passed")):
             ttk.Checkbutton(today, text=text, variable=v[key]).pack(anchor="w")
+        self._background_section(f, row=5)
         return f
+
+    # -- background picture or video -------------------------------------------
+    def _background_section(self, f, row):
+        v = self.vars
+        ttk.Label(f, text="Background").grid(row=row, column=0, sticky="nw", pady=(12, 0))
+        box = ttk.Frame(f)
+        box.grid(row=row, column=1, sticky="w", pady=(12, 0))
+        self.bg_name = ttk.Label(box)
+        self.bg_name.grid(row=0, column=0, columnspan=3, sticky="w")
+        buttons = ttk.Frame(box)
+        buttons.grid(row=1, column=0, columnspan=3, sticky="w", pady=4)
+        self.bg_choose = ttk.Button(buttons, text="Choose picture, GIF or video…", command=self._choose_background)
+        self.bg_choose.pack(side="left")
+        ttk.Button(buttons, text="Remove", command=self._remove_background).pack(side="left", padx=6)
+        ttk.Label(box, text="Darken").grid(row=2, column=0, sticky="w")
+        ttk.Scale(box, from_=0.0, to=0.8, variable=v["background_dim"], length=200).grid(row=2, column=1, sticky="w")
+        ttk.Label(box, text="Play video").grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Combobox(box, textvariable=v["background_play"], values=list(PLAY_MODES.values()), state="readonly",
+                     width=44).grid(row=3, column=1, columnspan=2, sticky="w", pady=(4, 0))
+        self.bg_info = ttk.Label(box, foreground="#555", wraplength=420, justify="left")
+        self.bg_info.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self._show_background()
+
+    def _background_target(self):
+        cal = self.app.calendar.win
+        return cal.winfo_width(), cal.winfo_height()
+
+    def _show_background(self, status=None):
+        from .media import advice
+        b = self.background
+        self.bg_name.configure(text=f"{b['name']}  ({'video' if b['kind'] == 'video' else 'picture'}, "
+                                    f"{b['source_w']}×{b['source_h']})" if b else "None: the theme colour")
+        if status is None:
+            status = (advice(b, self._background_target()) if b else
+                      "Pictures (PNG, JPG, WebP…), GIFs and videos (MP4, MOV, WebM…) fill the calendar behind the "
+                      "dates. A video plays only while you can see it, and pauses (using no power) otherwise.")
+        self.bg_info.configure(text=status)
+
+    def _choose_background(self):
+        from . import media
+        if self._import:
+            return
+        path = filedialog.askopenfilename(parent=self, title="Choose a picture, GIF or video",
+                                          filetypes=media.FILETYPES)
+        if not path:
+            return
+        folder = os.path.join(self.app.store.folder, "backgrounds")
+        target = self._background_target()
+        q = queue.Queue()
+
+        def work():  # copying and converting can take seconds; Tk keeps running meanwhile
+            try:
+                q.put(("done", media.import_media(path, folder, target, progress=lambda x: q.put(("progress", x)))))
+            except Exception as err:  # unreadable or unsupported file, full disk, codec trouble
+                q.put(("error", err))
+        threading.Thread(target=work, daemon=True, name="background-import").start()
+        self.bg_choose.state(["disabled"])
+        self._import = [q, None]
+        self._show_background("Preparing the background…")
+        self._poll_import()
+
+    def _poll_import(self):
+        q = self._import[0]
+        while True:
+            try:
+                kind, value = q.get_nowait()
+            except queue.Empty:
+                self._import[1] = self.after(100, self._poll_import)
+                return
+            if kind == "progress":
+                self._show_background(f"Preparing the background… {round(value * 100)} %  "
+                                      "(small videos and GIFs are sharpened once, now)")
+                continue
+            self._import = None
+            self.bg_choose.state(["!disabled"])
+            if kind == "error":
+                self._show_background()
+                messagebox.showerror("Background", str(value), parent=self)
+            else:
+                self.background = value
+                self._show_background()
+                self._changed()
+            return
+
+    def _remove_background(self):
+        self.background = None
+        self._show_background()
+        self._changed()
 
     def _theme_key(self):
         return next(k for k, n in theme.THEME_NAMES.items() if n == self.vars["theme"].get())
@@ -813,6 +956,8 @@ class SettingsDialog(Dialog):
     def close(self):
         if self._preview_job:
             self.after_cancel(self._preview_job)
+        if self._import and self._import[1]:
+            self.after_cancel(self._import[1])  # the import thread finishes on its own; startup tidies its file
         if self.snapshot:  # closed without saving: put everything back as it was
             self.app.restore_snapshot(self.snapshot)
         super().close()

@@ -141,3 +141,21 @@ class CalendarClickTests(unittest.TestCase):
             self.assertIn("1/3", texts)
         finally:
             app.quit()
+
+    def test_progress_bar_shows_percent_left(self):
+        from calendardesk.app import App
+        from calendardesk.model import day_left_percent
+        from datetime import datetime
+        store = Store(tempfile.mkdtemp(prefix="cd-test-"))
+        store.settings["hotkey"] = "K"
+        app = App(store, tray=False)
+        try:
+            pump(app.root, 300)
+            c = app.calendar.canvas
+            texts = [c.itemcget(i, "text") for i in c.find_withtag("progress_pct")]
+            self.assertEqual(texts, [f"{day_left_percent(datetime.now())}% left"])
+            store.settings["today_progress"] = False
+            app.calendar.redraw()
+            self.assertEqual(c.find_withtag("progress_pct"), ())
+        finally:
+            app.quit()

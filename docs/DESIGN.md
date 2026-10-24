@@ -56,6 +56,18 @@ uninstalled.
   be tinted with a TODAY badge, light up its week row and weekday, and show a
   day-progress bar; each is a setting. Calendar and card text scale with window size.
 - **Countdown card styles**: minimal, solid, gradient, progress ring.
+- **Background picture, GIF or video** (Settings → Appearance). Two borderless windows sit directly under
+  the calendar, always its size and place: the theme colour (at the calendar's opacity), and above it the
+  picture or video, let through by the *Darken* amount. The calendar draws its empty parts in a key colour
+  that Windows leaves out (`-transparentcolor`), so the media shows through; those pixels also pass clicks
+  down to the media window, which hands them back to the calendar's handlers. Text gets a one-pixel shadow,
+  date colours become a band at the top of the cell, and the today/week tints are left off. Choosing a
+  file copies it into `backgrounds\` once (a background thread, with progress): pictures as PNG (at most
+  4K), MP4/MOV/WMV as they are, and GIF/WebM/MKV/AVI converted to H.264 MP4 with PyAV. Anything smaller
+  than the calendar is upscaled (Lanczos) and sharpened (unsharp mask) in FFmpeg's filters while
+  converting, so playback never does that work. Videos are played by Windows' Media Foundation (MFPlay,
+  hardware decoding) into the media window, muted and looping, and only while they can be seen;
+  the foreground hook plays and pauses them.
 
 ## Structure
 
@@ -70,6 +82,9 @@ calendardesk/
   shortcut_ui.py          Settings → Shortcuts tab and the key recorder
   app.py                  root controller: actions from other threads, ticks, reminders, windows
   desktop_cal.py          the wallpaper calendar (single Canvas)
+  backdrop.py             the picture / video windows under the calendar, click hand-back, play / pause
+  media.py                checking, copying, converting and sharpening background files; quality tips
+  videoplayer.py          Windows' MFPlay video player through ctypes (no extra thread)
   day_panel.py            day panel: task cards, checklists, notes, smart add box
   richnote.py             notes with bullets / numbers / bold <-> markdown subset
   anim.py                 the tick animation (canvas items only, stops itself)
@@ -97,7 +112,8 @@ day-progress bar's line, and redraws the whole calendar only when the day change
 cycles over 20 s, 200 tasks): about 0.01-0.02 % of one core with the glow on or
 off, about 59 MB. The day panel opens in
 under 0.2 s with 30 detailed tasks: the first cards are built at once, the rest
-just after.
+just after. A playing background video costs about 8-10 % of one core (decoding in Windows'
+media pipeline); paused or hidden, nothing.
 
 ## Data (`%APPDATA%\CalendarDesk\data.json`)
 

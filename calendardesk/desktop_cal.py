@@ -1,11 +1,13 @@
 """The month calendar that sits on the desktop wallpaper."""
 import math
+import os
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 
 from . import model, theme, winapi
 from .anim import TickAnimation
+from .backdrop import KEY, Backdrop
 from .holidays_in import holiday_name
 from .pinned import PinnedWindow
 
@@ -42,6 +44,8 @@ class DesktopCalendar(PinnedWindow):
         self._click_job = None
         self._buttons = {}       # header item -> action, rebuilt by each redraw
         self.scale = self.win.winfo_fpixels("1i") / 96.0
+        self.backdrop = None     # picture or video behind the calendar (backdrop.py), or None
+        self._shadows = {}       # text item -> its shadow, drawn over a picture or video
 
         c = self.canvas
         c.bind("<Configure>", lambda e: self.redraw())
@@ -88,14 +92,46 @@ class DesktopCalendar(PinnedWindow):
         self.redraw()
 
     def set_opacity(self, value):
-        self.win.attributes("-alpha", value)
+        if self.backdrop:  # the text stays solid; the background behind it takes the opacity
+            self.backdrop.set_look(value, self.app.settings["background_dim"])
+        else:
+            self.win.attributes("-alpha", value)
+
+    # -- background picture or video ----------------------------------------
+    def _sync_background(self):
+        """Open, change or close the background to match the settings (cheap when nothing changed)."""
+        s = self.app.settings
+        record = s.get("background")
+        folder = os.path.join(self.app.store.folder, "backgrounds")
+        if record and not os.path.exists(os.path.join(folder, record.get("file") or "")):
+            record = None  # its file is gone: plain calendar
+        if (record or {}).get("file") != (self.backdrop.record.get("file") if self.backdrop else None):
+            self.close_background()
+            if record:
+                self.backdrop = Backdrop(self, record, folder)
+                self.win.attributes("-alpha", 1.0)
+                self.win.attributes("-transparentcolor", KEY)
+            else:
+                self.win.attributes("-transparentcolor", "")
+                self.win.attributes("-alpha", s["opacity"])
+        if self.backdrop:
+            self.backdrop.set_look(s["opacity"], s["background_dim"])
+            self.backdrop.set_mode(s["background_play"])
+
+    def close_background(self):
+        if self.backdrop:
+            self.backdrop.destroy()
+            self.backdrop = None
 
     # -- drawing -----------------------------------------------------------
     def redraw(self):
         c = self.canvas
         c.delete("all")
-        c.configure(bg=theme.BG)
-        self.win.configure(bg=theme.BG)
+        self._sync_background()
+        back = KEY if self.backdrop else theme.BG
+        c.configure(bg=back)
+        self.win.configure(bg=back)
+        self._shadows = {}
         self.hits, self.glow = [], []
         self._task_items, self._buttons = {}, {}
         self._progress = None
@@ -172,6 +208,8 @@ class DesktopCalendar(PinnedWindow):
 
         g = max(P(20), 16)
         c.create_polygon(W, H - g, W, H, W - g, H, fill=theme.MUTED, outline="", tags=("grip",))
+        if self.backdrop:
+            self._shadow_text(below=hh)
         self._glow_steady = True
         if self.glow and not self._pulse_job:
             self._pulse_job = self.win.after(1000, self._pulse)
@@ -181,17 +219,24 @@ class DesktopCalendar(PinnedWindow):
         x1, y1 = x0 + cw - P(2), y0 + rh - P(2)
         in_month = day.month == self.month
         is_today = day == today
-        fill = self.app.store.data["date_colors"].get(day.isoformat())
+        clear = self.backdrop is not None  # the picture or video shows through the cell
+        user_fill = self.app.store.data["date_colors"].get(day.isoformat())
+        fill = None if clear else user_fill
         # On a user-coloured date, plain text switches to black/white to stay readable.
         plain = theme.readable_on(fill) if fill else theme.TEXT
         if not fill:
             fill = theme.BG
-            if is_today and s["today_tint"]:
+            if clear:
+                pass
+            elif is_today and s["today_tint"]:
                 fill = theme.mix(theme.ACCENT, theme.BG, 0.18)
             elif current_week:
                 fill = theme.mix(theme.ACCENT, theme.BG, 0.07)
-        c.create_rectangle(x0, y0, x1, y1, fill=fill, outline=theme.TODAY if is_today else theme.GRID,
-                           width=P(2) if is_today else 1)
+        c.create_rectangle(x0, y0, x1, y1, fill="" if clear else fill,
+                           outline=theme.TODAY if is_today else theme.GRID, width=P(2) if is_today else 1)
+        if clear and user_fill:  # the date's colour as a band along the top, so the picture stays visible
+            c.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y0 + P(8) + f["bold"].metrics("linespace"),
+                               fill=user_fill, width=0)
         self.hits.append((x0, y0, x1, y1, "cell", day, None))
         if is_today and s["today_glow"]:
             # Rings fading inward from the border; _pulse() animates their brightness.
@@ -206,6 +251,8 @@ class DesktopCalendar(PinnedWindow):
         num_color = theme.DIM if not in_month else (theme.WEEKEND if weekend else plain)
         if plain != theme.TEXT:
             num_color = plain
+        if clear and user_fill:
+            num_color = theme.readable_on(user_fill)
         hol = holiday_name(day) if s["show_holidays"] else None
         if hol and in_month:
             num_color = theme.HOLIDAY
@@ -236,9 +283,11 @@ class DesktopCalendar(PinnedWindow):
                           width=P(3), capstyle="round")
             item = c.create_line(x0 + P(6), by, x0 + P(6), by, fill=theme.ACCENT, width=P(3), capstyle="round",
                                  tags=("progress",))
-            self._progress = (item, x0 + P(6), x1 - x0 - P(12), by)
+            pct = c.create_text(x1 - P(6), by - P(4), anchor="se", font=f["small"], fill=theme.ACCENT,
+                                tags=("progress_pct",))
+            self._progress = (item, x0 + P(6), x1 - x0 - P(12), by, pct)
             self.update_progress()
-            bottom = by - P(4)
+            bottom = c.bbox(pct)[1] - P(1)
 
         tasks = model.tasks_on(self.app.store.data["tasks"], day)
         y = nb[3] + P(2)
@@ -276,12 +325,34 @@ class DesktopCalendar(PinnedWindow):
         """Move today's progress bar to the current minute. Only the bar's line changes, so the once-a-minute
         update costs next to nothing (a full redraw of a busy month takes 15-30 ms)."""
         if self._progress:
-            item, x, length, y = self._progress
+            item, x, length, y, pct = self._progress
             now = datetime.now()
             self.canvas.coords(item, x, y, x + length * (now.hour * 60 + now.minute) / 1440, y)
+            text = f"{model.day_left_percent(now)}% left"
+            self.canvas.itemconfigure(pct, text=text)
+            if pct in self._shadows:
+                self.canvas.itemconfigure(self._shadows[pct], text=text)
+
+    def _shadow_text(self, below):
+        """A dark (or, under dark text, light) copy one pixel down-right of every text below the header,
+        so it reads on any picture."""
+        c = self.canvas
+        d = max(1, self.px(1))
+        for item in c.find_all():
+            if c.type(item) != "text" or c.coords(item)[1] < below:
+                continue
+            x, y = c.coords(item)
+            shadow = c.create_text(x + d, y + d, text=c.itemcget(item, "text"), font=c.itemcget(item, "font"),
+                                   anchor=c.itemcget(item, "anchor"),
+                                   fill=theme.readable_on(c.itemcget(item, "fill") or theme.TEXT))
+            c.tag_lower(shadow, item)
+            self._shadows[item] = shadow
 
     def to_front(self, focus=True):
         super().to_front(focus)
+        if self.backdrop:
+            self.backdrop.restack()
+            self.backdrop.update_play()
         if self.glow:  # start breathing now instead of at the next one-second check
             if self._pulse_job:
                 self.win.after_cancel(self._pulse_job)
@@ -306,8 +377,18 @@ class DesktopCalendar(PinnedWindow):
         if delay:
             self._pulse_job = self.win.after(delay, self._pulse)
 
+    def to_back(self):
+        super().to_back()
+        if self.backdrop:
+            self.backdrop.restack()
+            self.backdrop.update_play()
+
     def _foreground_changed(self):
-        """Another window came to the front (maybe the desktop): let the glow look again."""
+        """Another window came to the front (maybe the desktop): let the glow look again, keep the
+        background under the calendar (a click on the calendar raises it) and play or pause it."""
+        if self.backdrop:
+            self.backdrop.restack()
+            self.backdrop.update_play()
         if self.glow and not self._pulse_job:
             self._pulse_job = self.win.after(0, self._pulse)
 
@@ -332,7 +413,15 @@ class DesktopCalendar(PinnedWindow):
                 return h
         return None
 
+    def close_quick(self, save=True):
+        """Close the quick-add box if it is open: typed text is added, an empty box just goes away."""
+        if self.quick:
+            self._quick_done(save)
+
     def _click(self, e):
+        if self.quick:  # a click anywhere else on the calendar closes the box (and only that)
+            self.close_quick()
+            return
         h = self._hit(e.x, e.y)
         if not h:
             return
@@ -385,8 +474,7 @@ class DesktopCalendar(PinnedWindow):
 
     def _quick_add(self, day, hit):
         """Inline box over the day; Enter saves, Esc cancels."""
-        if self.quick:
-            self.quick.destroy()
+        self.close_quick()
         x0, y0, x1, _ = hit[:4]
         f = theme.fonts(self.app.settings["font_size"] * self.zoom)
         e = tk.Entry(self.canvas, font=f["normal"], bg=theme.PANEL, fg=theme.TEXT,
@@ -416,6 +504,7 @@ class DesktopCalendar(PinnedWindow):
             else:
                 self.redraw()
 
+        self._quick_done = done
         e.bind("<Return>", lambda ev: done(True))
         e.bind("<Escape>", lambda ev: done(False))
         e.bind("<FocusOut>", lambda ev: done(True))

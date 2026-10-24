@@ -3,3 +3,12 @@ __pycache__/
 *.pyc
 *.xlsx
 .superpowers/
+
+# Personal data must never be committed (the app keeps it in %APPDATA%\CalendarDesk)
+data*.json
+error.log
+backups/
+backgrounds/
+*.mp4
+*.gif
+.claude/

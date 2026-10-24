@@ -370,3 +370,9 @@ def task_from_quick(parsed):
     t.update(time=parsed["time"], repeat=parsed["repeat"], interval=parsed["interval"],
              weekdays=list(parsed["weekdays"]), remind=parsed["remind"])
     return t
+
+
+def day_left_percent(now):
+    """Whole percent of the day still to come, rounded up so it shows 0 % only once the day is over."""
+    left = 1440 - (now.hour * 60 + now.minute)
+    return -(-left * 100 // 1440)

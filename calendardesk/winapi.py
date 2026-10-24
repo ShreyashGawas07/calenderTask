@@ -15,6 +15,8 @@ user32.GetAncestor.restype = wintypes.HWND
 user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
 user32.SetWindowLongPtrW.restype = ctypes.c_void_p
 user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+user32.GetWindowLongPtrW.restype = ctypes.c_void_p
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                 ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
@@ -48,7 +50,7 @@ kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 
-GWLP_HWNDPARENT = -8
+GWLP_HWNDPARENT, GWL_EXSTYLE, WS_EX_NOACTIVATE = -8, -20, 0x08000000
 GA_ROOT = 2
 HWND_TOP, HWND_BOTTOM, HWND_TOPMOST, HWND_NOTOPMOST = 0, 1, -1, -2
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
@@ -99,6 +101,17 @@ def pin_to_desktop(hwnd):
 
 def send_to_bottom(hwnd):
     user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
+def place_below(hwnd, above):
+    """Put `hwnd` directly under the window `above` in the z-order."""
+    user32.SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
+def never_activate(hwnd):
+    """Clicks on this window neither focus it nor bring it in front of other windows."""
+    style = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) or 0
+    user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE)
 
 
 def raise_window(hwnd):

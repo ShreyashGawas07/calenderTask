@@ -203,3 +203,14 @@ class TaskFromQuickTests(unittest.TestCase):
         self.assertEqual((t["title"], t["date"], t["time"], t["repeat"], t["weekdays"], t["remind"]),
                          ("standup", "2026-10-26", "09:30", "weekly", [0, 3], True))
         self.assertEqual(t["items"], [])
+
+
+class DayLeftTests(unittest.TestCase):
+    def test_percent_of_day_left(self):
+        from datetime import datetime
+        from calendardesk.model import day_left_percent
+        self.assertEqual(day_left_percent(datetime(2026, 10, 25, 0, 0)), 100)
+        self.assertEqual(day_left_percent(datetime(2026, 10, 25, 12, 0)), 50)
+        self.assertEqual(day_left_percent(datetime(2026, 10, 25, 18, 0)), 25)
+        self.assertEqual(day_left_percent(datetime(2026, 10, 25, 23, 59)), 1)
+        self.assertEqual(day_left_percent(datetime(2026, 10, 25, 23, 50)), 1)  # never 0 while time is left

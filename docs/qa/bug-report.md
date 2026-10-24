@@ -6,7 +6,7 @@ All scripts import this helper (`qa-scratch/h.py`). It uses a temp data folder, 
 
 ```python
 import os, sys, tempfile, time, traceback, json
-sys.path.insert(0, r"C:/Users/shreyash/Downloads/CalenderTask")
+sys.path.insert(0, r"C:/path/to/CalenderTask")
 from datetime import date, timedelta
 from calendardesk import model
 from calendardesk.app import App

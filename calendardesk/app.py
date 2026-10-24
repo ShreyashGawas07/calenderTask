@@ -35,6 +35,7 @@ class App:
         if self.settings["rollover"]:
             model.rollover(self.store.data["tasks"], self._day)
         self.save()
+        self._prune_backgrounds()
 
         theme.apply(self.settings)
         self.calendar = DesktopCalendar(self)
@@ -81,6 +82,14 @@ class App:
             note.restyle()
         for v in list(self.views):
             v.refresh()
+
+    def _prune_backgrounds(self):
+        """Delete background files left over from earlier choices (and from Settings closed with Cancel)."""
+        folder = os.path.join(self.store.folder, "backgrounds")
+        if os.path.isdir(folder):
+            from .media import prune
+            bg = self.settings.get("background") or {}
+            prune(folder, {bg.get("file"), bg.get("poster")})
 
     def _report_error(self, exc, val, tb):
         text = "".join(traceback.format_exception(exc, val, tb))
@@ -580,6 +589,7 @@ class App:
 
     def quit(self):
         self.calendar.stop_hooks()  # first, so nothing below can leave the system hook behind
+        self.calendar.close_background()  # stops Windows' video player before its window goes
         for w in self.notes.values():
             w.flush()
         for v in list(self.views):  # day panels hold typing that is saved on Enter or focus-out

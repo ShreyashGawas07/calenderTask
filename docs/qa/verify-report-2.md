@@ -1,6 +1,6 @@
 # Verify report — round 2
 
-I verified the uncommitted working tree on top of 19ab728. For the HEAD baseline, I extracted a read-only copy with `git archive HEAD | tar -x` into `%TEMP%\claude\qa-verify2\old`. I did not stash, check out, reset or commit anything. All scripts are in `C:\Users\shreyash\AppData\Local\Temp\claude\qa-verify2`. Every run used a temp data folder and hotkey "K", and was wrapped in `timeout`.
+I verified the uncommitted working tree on top of 19ab728. For the HEAD baseline, I extracted a read-only copy with `git archive HEAD | tar -x` into `%TEMP%\claude\qa-verify2\old`. I did not stash, check out, reset or commit anything. All scripts are in `%TEMP%\claude\qa-verify2`. Every run used a temp data folder and hotkey "K", and was wrapped in `timeout`.
 
 **New tests against HEAD code:** `tests/test_timers.py` run on the HEAD copy gives 10 tests, 8 FAIL and 1 ERROR. The one that passes is `test_reminder_fires_at_its_minute`, a guard the fixer described as such. All 10 pass on the working tree, 3 of 3 repeat runs.
 

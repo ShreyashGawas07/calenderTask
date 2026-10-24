@@ -31,6 +31,9 @@ DEFAULT_SETTINGS = {
     "today_tint": True,
     "today_week": True,
     "today_progress": True,
+    "background": None,  # picture or video behind the calendar: a record made by media.import_media()
+    "background_dim": 0.35,  # how much the theme colour darkens it, 0..0.9
+    "background_play": "visible",  # backdrop.PLAY_MODES
     "calendar_geometry": None,
     "mini_geometry": None,
 }

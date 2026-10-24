@@ -1,6 +1,6 @@
 # Verify report — round 3 (final)
 
-I tested the uncommitted round-3 fix in `calendardesk/desktop_cal.py` and the new `tests/test_leaks.py` myself. For the "before" numbers I used a scratch copy made with `git archive HEAD` (9af1afb). The "after" numbers come from a HEAD copy with the working-tree `desktop_cal.py` and `test_leaks.py` dropped in; it matches the working tree except for line endings. All runs used temp Store folders and hotkey "K", each wrapped in `timeout`. The working tree was not changed. Scripts are in `C:\Users\shreyash\AppData\Local\Temp\claude\qa-verify3`: `mem.py`, `mem_panel.py` and `behave.py`.
+I tested the uncommitted round-3 fix in `calendardesk/desktop_cal.py` and the new `tests/test_leaks.py` myself. For the "before" numbers I used a scratch copy made with `git archive HEAD` (9af1afb). The "after" numbers come from a HEAD copy with the working-tree `desktop_cal.py` and `test_leaks.py` dropped in; it matches the working tree except for line endings. All runs used temp Store folders and hotkey "K", each wrapped in `timeout`. The working tree was not changed. Scripts are in `%TEMP%\claude\qa-verify3`: `mem.py`, `mem_panel.py` and `behave.py`.
 
 **Overall: PASS**
 
