@@ -144,3 +144,12 @@ class FallbackTests(unittest.TestCase):
     def test_every_one_day_label(self):
         r = p("water every 1 day")
         self.assertEqual((r["repeat"], r["interval"], r["found"]), ("daily", 1, ["Daily"]))
+
+
+class TaskFromQuickTests(unittest.TestCase):
+    def test_fields_copied(self):
+        from calendardesk.model import task_from_quick
+        t = task_from_quick(p("standup every mon and thu 9:30 remind me"))
+        self.assertEqual((t["title"], t["date"], t["time"], t["repeat"], t["weekdays"], t["remind"]),
+                         ("standup", "2026-10-26", "09:30", "weekly", [0, 3], True))
+        self.assertEqual(t["items"], [])

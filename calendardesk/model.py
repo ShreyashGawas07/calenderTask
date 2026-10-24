@@ -26,7 +26,7 @@ def new_task(title, day):
         "date": day if isinstance(day, str) else d2s(day),
         "time": None, "remind": False, "remind_before": 0,
         "repeat": "none", "interval": 1, "weekdays": [], "until": None,
-        "done": False, "done_dates": [], "skip_dates": [],
+        "done": False, "done_dates": [], "skip_dates": [], "items": [],
         "color": None, "created": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -327,3 +327,11 @@ def parse_quick(text, base_day):
     if title:
         out["title"] = title
     return out
+
+
+def task_from_quick(parsed):
+    """A new task from parse_quick() output."""
+    t = new_task(parsed["title"], parsed["date"])
+    t.update(time=parsed["time"], repeat=parsed["repeat"], interval=parsed["interval"],
+             weekdays=list(parsed["weekdays"]), remind=parsed["remind"])
+    return t

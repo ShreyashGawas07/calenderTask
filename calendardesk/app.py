@@ -8,8 +8,8 @@ from tkinter import colorchooser, filedialog, messagebox
 
 from . import model, theme, winapi
 from .desktop_cal import DesktopCalendar
-from .dialogs import (CountdownDialog, CountdownManager, DayDialog, SearchDialog, SettingsDialog,
-                      TaskDialog)
+from .day_panel import DayPanel
+from .dialogs import CountdownDialog, CountdownManager, SearchDialog, SettingsDialog, TaskDialog
 from .store import Store
 from .widgets import CountdownCard, MiniCalendar, NoteWindow, ReminderPopup
 
@@ -215,7 +215,7 @@ class App:
         TaskDialog(self, task, day)
 
     def open_day(self, day):
-        self._single(DayDialog, day)
+        return self._single(DayPanel, day)
 
     def toggle_done(self, t, day, value=None):
         model.set_task_done(t, day, (not model.is_done(t, day)) if value is None else value)

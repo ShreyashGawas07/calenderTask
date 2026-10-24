@@ -1,4 +1,4 @@
-"""Normal windowed dialogs: day view, task editor, countdowns, search and settings."""
+"""Normal windowed dialogs: task editor, countdowns, search and settings (the day panel is in day_panel.py)."""
 import os
 import re
 import tkinter as tk
@@ -253,106 +253,6 @@ class TaskDialog(Dialog):
                                parent=self):
             self.app.delete_task(self.task, None, whole=True)
             self.close()
-
-
-class DayDialog(Dialog):
-    def __init__(self, app, day):
-        super().__init__(app, day.strftime("%A, %d %B %Y"), resizable=True)
-        self.day = day
-        head = ttk.Frame(self)
-        head.pack(fill="x")
-        ttk.Label(head, text=day.strftime("%A, %d %B %Y"), font=(theme.FAMILY, 13, "bold")).pack(anchor="w")
-        self.info = ttk.Label(head, foreground="#c05f00")
-        self.info.pack(anchor="w")
-
-        cols = ("done", "time", "title", "repeat")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10, selectmode="browse")
-        for c, text, w in (("done", "✓", 30), ("time", "Time", 60), ("title", "Task", 280), ("repeat", "Repeats", 150)):
-            self.tree.heading(c, text=text)
-            self.tree.column(c, width=w, anchor="center" if c in ("done", "time") else "w", stretch=c == "title")
-        self.tree.pack(fill="both", expand=True, pady=8)
-        self.tree.bind("<Double-1>", lambda e: self.edit())
-        self.tree.bind("<space>", lambda e: self.toggle())
-        self.tree.bind("<Delete>", lambda e: self.delete())
-
-        b = ttk.Frame(self)
-        b.pack(fill="x")
-        for text, cmd in (("Add", self.add), ("Edit", self.edit), ("Done / undo", self.toggle),
-                          ("Move to next day", self.move), ("Delete", self.delete)):
-            ttk.Button(b, text=text, command=cmd).pack(side="left", padx=(0, 6))
-
-        c = ttk.Frame(self)
-        c.pack(fill="x", pady=(10, 0))
-        ttk.Label(c, text="Date colour:").pack(side="left")
-        for col in theme.DATE_COLORS:
-            tk.Button(c, bg=col, activebackground=col, width=2, relief="flat",
-                      command=lambda col=col: app.set_date_color(day, col)).pack(side="left", padx=2)
-        ttk.Button(c, text="Custom…", command=lambda: app.set_date_color(day, "custom", parent=self)).pack(side="left", padx=4)
-        ttk.Button(c, text="Clear", command=lambda: app.set_date_color(day, None)).pack(side="left")
-        ttk.Button(c, text="Countdown to this day…", command=lambda: app.edit_countdown(day=day)).pack(side="right")
-        self.refresh()
-        self.present()
-
-    def refresh(self):
-        if not self.winfo_exists():
-            return
-        info = []
-        hol = holiday_name(self.day)
-        if hol:
-            info.append(hol)
-        sw = model.school_week(self.app.settings["school_terms"], self.day)
-        if sw:
-            info.append(f"{sw[0]} · week {sw[1]}")
-        self.info.configure(text="   ·   ".join(info))
-        sel = self.tree.selection()
-        self.tree.delete(*self.tree.get_children())
-        self.rows = {}
-        for t in model.tasks_on(self.app.store.data["tasks"], self.day):
-            iid = self.tree.insert("", "end", values=("✓" if model.is_done(t, self.day) else "",
-                                                      t.get("time") or "", t["title"], repeat_label(t)))
-            self.rows[iid] = t
-        if sel and sel[0] in self.rows:
-            self.tree.selection_set(sel)
-
-    def _selected(self):
-        sel = self.tree.selection()
-        return self.rows.get(sel[0]) if sel else None
-
-    def add(self):
-        self.app.edit_task(day=self.day)
-
-    def edit(self):
-        t = self._selected()
-        if t:
-            self.app.edit_task(task=t, day=self.day)
-
-    def toggle(self):
-        t = self._selected()
-        if t:
-            self.app.toggle_done(t, self.day)
-
-    def move(self):
-        t = self._selected()
-        if not t:
-            return
-        if t.get("repeat", "none") != "none":
-            messagebox.showinfo("Repeating task", "Edit the task to change when a repeating task happens.", parent=self)
-            return
-        self.app.move_task(t, self.day + timedelta(1))
-
-    def delete(self):
-        t = self._selected()
-        if not t:
-            return
-        if t.get("repeat", "none") == "none":
-            if messagebox.askyesno("Delete task", f"Delete '{t['title']}'?", parent=self):
-                self.app.delete_task(t, self.day, whole=True)
-            return
-        ans = messagebox.askyesnocancel("Delete repeating task",
-                                        f"'{t['title']}' repeats.\n\nYes = delete only this day\nNo = delete all repeats",
-                                        parent=self)
-        if ans is not None:
-            self.app.delete_task(t, self.day, whole=not ans)
 
 
 class CountdownDialog(Dialog):

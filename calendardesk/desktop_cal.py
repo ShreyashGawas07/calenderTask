@@ -364,6 +364,12 @@ class DesktopCalendar(PinnedWindow):
         self.quick = e
         self.canvas.create_window(x0 + self.px(3), y0 + self.px(24), anchor="nw", window=e,
                                   width=x1 - x0 - self.px(6))
+        # Live preview of what smart typing understood ("Tomorrow · 19:00").
+        preview = tk.Label(self.canvas, font=f["small"], bg=theme.PANEL, fg=theme.ACCENT, anchor="w")
+        self.canvas.create_window(x0 + self.px(3), y0 + self.px(24) + e.winfo_reqheight(), anchor="nw",
+                                  window=preview, width=x1 - x0 - self.px(6))
+        e.bind("<KeyRelease>", lambda ev: preview.configure(
+            text=" · ".join(model.parse_quick(e.get(), day)["found"]) if e.get().strip() else ""))
         self.to_front()
         e.focus_set()
 
@@ -373,8 +379,9 @@ class DesktopCalendar(PinnedWindow):
             text = e.get().strip()
             self.quick = None
             e.destroy()
+            preview.destroy()
             if save and text:
-                self.app.add_task(model.new_task(text, day))
+                self.app.add_task(model.task_from_quick(model.parse_quick(text, day)))
             else:
                 self.redraw()
 
