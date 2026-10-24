@@ -218,7 +218,7 @@ class App:
         self._single(DayDialog, day)
 
     def toggle_done(self, t, day, value=None):
-        model.set_done(t, day, (not model.is_done(t, day)) if value is None else value)
+        model.set_task_done(t, day, (not model.is_done(t, day)) if value is None else value)
         self.changed()
 
     def move_task(self, t, day):

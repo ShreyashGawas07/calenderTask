@@ -157,3 +157,54 @@ class StoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChecklistTests(unittest.TestCase):
+    def _task(self, n=3, **kw):
+        t = model.new_task("Report", date(2026, 3, 2))
+        t.update(kw)
+        t["items"] = [model.new_item(f"step {i}") for i in range(n)]
+        return t
+
+    def test_one_off_items(self):
+        d = date(2026, 3, 2)
+        t = self._task()
+        a, b, c = t["items"]
+        model.set_item_done(t, a, d, True)
+        model.set_item_done(t, b, d, True)
+        self.assertEqual(model.progress(t, d), (2, 3))
+        self.assertFalse(model.is_done(t, d))
+        model.set_item_done(t, c, d, True)
+        self.assertTrue(model.is_done(t, d))
+        model.set_item_done(t, a, d, False)
+        self.assertFalse(model.is_done(t, d))
+        self.assertEqual(model.progress(t, d), (2, 3))
+
+    def test_task_tick_ticks_items_untick_keeps(self):
+        d = date(2026, 3, 2)
+        t = self._task()
+        model.set_task_done(t, d, True)
+        self.assertTrue(all(model.item_done(t, i, d) for i in t["items"]))
+        model.set_task_done(t, d, False)
+        self.assertTrue(all(model.item_done(t, i, d) for i in t["items"]))
+        self.assertFalse(model.is_done(t, d))
+
+    def test_repeating_items_per_day(self):
+        d1, d2 = date(2026, 3, 2), date(2026, 3, 3)
+        t = self._task(n=2, repeat="daily")
+        model.set_item_done(t, t["items"][0], d1, True)
+        self.assertTrue(model.item_done(t, t["items"][0], d1))
+        self.assertFalse(model.item_done(t, t["items"][0], d2))
+        self.assertFalse(model.is_done(t, d1))
+        model.set_item_done(t, t["items"][1], d1, True)
+        self.assertTrue(model.is_done(t, d1))
+        self.assertFalse(model.is_done(t, d2))
+        self.assertEqual(model.progress(t, d2), (0, 2))
+
+    def test_old_task_without_items(self):
+        d = date(2026, 3, 2)
+        t = model.new_task("Old", d)
+        t.pop("items", None)
+        self.assertEqual(model.progress(t, d), (0, 0))
+        model.set_task_done(t, d, True)
+        self.assertTrue(model.is_done(t, d))

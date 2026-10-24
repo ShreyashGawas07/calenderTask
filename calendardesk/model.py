@@ -78,6 +78,50 @@ def set_done(t, day, done):
     t["done_dates"] = sorted(dates)
 
 
+# -- checklists ---------------------------------------------------------------
+# Items follow their task: one-off tasks use `done`, repeating tasks use `done_dates` per day.
+
+def new_item(text):
+    return {"id": new_id(), "text": text, "done": False, "done_dates": []}
+
+
+def item_done(t, item, day):
+    if t.get("repeat", "none") == "none":
+        return bool(item.get("done"))
+    return d2s(day) in item.get("done_dates", ())
+
+
+def _mark_item(t, item, day, done):
+    if t.get("repeat", "none") == "none":
+        item["done"] = done
+        return
+    dates = set(item.get("done_dates", ()))
+    (dates.add if done else dates.discard)(d2s(day))
+    item["done_dates"] = sorted(dates)
+
+
+def set_item_done(t, item, day, done):
+    """Tick or untick one item. Ticking the last open item ticks the task; unticking any unticks it."""
+    _mark_item(t, item, day, done)
+    if not done:
+        set_done(t, day, False)
+    elif all(item_done(t, i, day) for i in t.get("items", ())):
+        set_done(t, day, True)
+
+
+def set_task_done(t, day, done):
+    """Tick the task (and all its items), or untick it while keeping the items' progress."""
+    set_done(t, day, done)
+    if done:
+        for item in t.get("items", ()):
+            _mark_item(t, item, day, True)
+
+
+def progress(t, day):
+    items = t.get("items") or []
+    return sum(item_done(t, i, day) for i in items), len(items)
+
+
 def tasks_on(tasks, day):
     """Tasks occurring on `day`: open ones first, by time (untimed last), then creation."""
     found = [t for t in tasks if occurs_on(t, day)]
