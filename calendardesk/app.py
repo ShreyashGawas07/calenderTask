@@ -13,7 +13,7 @@ from .dialogs import CountdownDialog, CountdownManager, SearchDialog, SettingsDi
 from .store import Store
 from .widgets import CountdownCard, MiniCalendar, NoteWindow, ReminderPopup
 
-TICK_MS = 15_000
+TICK_MARGIN_MS = 200  # wake just after the minute turns, never just before it
 
 
 class App:
@@ -47,7 +47,7 @@ class App:
             self.tray = Tray(self.post)
             self.tray.start()
         self._settling = False
-        self.root.after(2000, self._tick)
+        self._tick_job = self.root.after(2000, self._tick)
 
     # -- basics ------------------------------------------------------------
     @property
@@ -258,10 +258,23 @@ class App:
             self.calendar.go_today()
             self.changed()
         elif self.settings["today_progress"] and now.minute != getattr(self, "_last_minute", None):
-            self.calendar.redraw()  # advance today's progress bar
+            self.calendar.update_progress()  # moves only the bar; real changes redraw everything
         self._last_minute = now.minute
         self._check_reminders(now)
-        self.root.after(TICK_MS, self._tick)
+        if self._tick_job:
+            self.root.after_cancel(self._tick_job)
+        self._tick_job = self.root.after(self._next_tick_ms(now), self._tick)
+
+    def _next_tick_ms(self, now):
+        """Sleep until the next whole minute (reminder times, the day and the progress bar all change on
+        whole minutes), or until a snoozed reminder falls due if that is sooner."""
+        wake = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        for s in self.store.data["reminders"].values():
+            if s.startswith("snooze:"):
+                due = datetime.fromisoformat(s[7:])
+                if now < due < wake:
+                    wake = due
+        return int((wake - now).total_seconds() * 1000) + TICK_MARGIN_MS
 
     def _check_reminders(self, now):
         state = self.store.data["reminders"]
@@ -483,6 +496,7 @@ class App:
         self.changed()
 
     def quit(self):
+        self.calendar.stop_hooks()  # first, so nothing below can leave the system hook behind
         for w in self.notes.values():
             w.flush()
         for v in list(self.views):  # day panels hold typing that is saved on Enter or focus-out
@@ -493,5 +507,8 @@ class App:
             self.hotkey.stop()
         if self.tray:
             self.tray.stop()
-        self.calendar.stop_hooks()
+        for job in self.root.tk.splitlist(self.root.tk.call("after", "info")):
+            # Timers (tick, glow, settle…) would only fail once the windows are gone. Their commands
+            # belong to their widgets, which delete them on destroy, so only the jobs are cancelled here.
+            self.root.tk.call("after", "cancel", job)
         self.root.destroy()

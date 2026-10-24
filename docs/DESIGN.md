@@ -78,7 +78,9 @@ wallpaper" check runs every 400 ms, and only while something is raised. Today's 
 breathes only while you can see it (the calendar raised, or the desktop itself in
 front); otherwise it is drawn steady and no timer runs: a Windows foreground-change
 hook (`SetWinEventHook`, delivered through Tk's own message loop, no thread) wakes it
-when another window comes to the front. Measured with `tests/perf_check.py` (CPU
+when another window comes to the front. The reminder clock wakes once a minute, just
+after the minute turns (or sooner for a snoozed reminder); it moves only the
+day-progress bar's line, and redraws the whole calendar only when the day changes. Measured with `tests/perf_check.py` (CPU
 cycles over 20 s, 200 tasks): about 0.01-0.02 % of one core with the glow on or
 off, about 59 MB. The day panel opens in
 under 0.2 s with 30 detailed tasks: the first cards are built at once, the rest

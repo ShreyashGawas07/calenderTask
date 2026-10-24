@@ -82,6 +82,12 @@ class NoteWindow(PinnedWindow):
             self.win.after_cancel(self._pending)
             self._store_text()
 
+    def destroy(self):
+        if self._pending:  # the window is going; a pending save would only fail later
+            self.win.after_cancel(self._pending)
+            self._pending = None
+        super().destroy()
+
 
 class CountdownCard(PinnedWindow):
     BASE_H = 130  # card height at which text uses the chosen text size

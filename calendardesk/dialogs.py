@@ -71,6 +71,12 @@ class Dialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.bind("<Escape>", lambda e: self.close())
         app.views.append(self)
+        self._topmost_job = None
+        self._traces = []  # (variable, trace id): Tcl holds these callbacks until they are removed
+
+    def watch_var(self, var, callback):
+        """Call `callback()` whenever `var` changes, for as long as this window exists."""
+        self._traces.append((var, var.trace_add("write", lambda *a: callback())))
 
     def present(self):
         self.update_idletasks()
@@ -80,8 +86,14 @@ class Dialog(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
         self.lift()
         self.attributes("-topmost", True)
-        self.after(300, lambda: self.winfo_exists() and self.attributes("-topmost", False))
+        if self._topmost_job:
+            self.after_cancel(self._topmost_job)
+        self._topmost_job = self.after(300, self._drop_topmost)
         self.focus_force()
+
+    def _drop_topmost(self):
+        self._topmost_job = None
+        self.attributes("-topmost", False)
 
     def refresh(self):
         pass
@@ -90,6 +102,15 @@ class Dialog(tk.Toplevel):
         if self in self.app.views:
             self.app.views.remove(self)
         self.destroy()
+
+    def destroy(self):
+        if self._topmost_job:  # a pending job would later run whatever callback reuses its name
+            self.after_cancel(self._topmost_job)
+            self._topmost_job = None
+        for var, trace in self._traces:
+            var.trace_remove("write", trace)
+        self._traces = []
+        super().destroy()
 
 
 def swatches(parent, colors, var, include_none=True):
@@ -493,7 +514,7 @@ class SettingsDialog(Dialog):
         ttk.Button(b, text="Reset size to default", command=self._default_size).pack(side="left")
         for key, var in self.vars.items():
             if key not in ("start_with_windows", "hotkey"):
-                var.trace_add("write", lambda *a, k=key: self._changed(k))
+                self.watch_var(var, lambda k=key: self._changed(k))
         # Lift the calendar and cards above other windows so the preview is visible.
         for w in app._pinned():
             w.to_front(focus=False)
@@ -574,7 +595,7 @@ class SettingsDialog(Dialog):
         self.size_labels["opacity"] = ttk.Label(f, width=18)
         self.size_labels["opacity"].grid(row=9, column=2, sticky="w", padx=6, pady=(14, 3))
         for key in ("cal_w", "cal_h", "font_size", "card_scale", "opacity"):
-            v[key].trace_add("write", lambda *a: self._size_text())
+            self.watch_var(v[key], self._size_text)
         self._size_text()
         return f
 

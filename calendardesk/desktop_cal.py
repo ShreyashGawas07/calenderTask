@@ -34,6 +34,7 @@ class DesktopCalendar(PinnedWindow):
         self.glow = []          # (item, strength, cell colour) for the pulsing today border
         self.animating = set()   # (task id, day) whose tick animation is playing; clicks on them wait
         self._task_items = {}    # (task id, day) -> (checkbox item, title item) for the animation
+        self._progress = None    # (item, x, full length, y) of today's progress bar, moved each minute
         self._pulse_job = None
         self._glow_steady = True  # rings currently show their full-strength (unanimated) colour
         self._fg_hook = winapi.ForegroundHook(self.win, self._foreground_changed)
@@ -89,6 +90,7 @@ class DesktopCalendar(PinnedWindow):
         self.win.configure(bg=theme.BG)
         self.hits, self.glow = [], []
         self._task_items = {}
+        self._progress = None
         W, H = c.winfo_width(), c.winfo_height()
         if W < 50 or H < 50:
             return
@@ -223,13 +225,13 @@ class DesktopCalendar(PinnedWindow):
 
         bottom = y1 - P(2)
         if is_today and s["today_progress"]:
-            now = datetime.now()
-            frac = (now.hour * 60 + now.minute) / 1440
             by = y1 - P(5)
             c.create_line(x0 + P(6), by, x1 - P(6), by, fill=theme.mix(theme.ACCENT, fill, 0.25),
                           width=P(3), capstyle="round")
-            c.create_line(x0 + P(6), by, x0 + P(6) + (x1 - x0 - P(12)) * frac, by, fill=theme.ACCENT,
-                          width=P(3), capstyle="round")
+            item = c.create_line(x0 + P(6), by, x0 + P(6), by, fill=theme.ACCENT, width=P(3), capstyle="round",
+                                 tags=("progress",))
+            self._progress = (item, x0 + P(6), x1 - x0 - P(12), by)
+            self.update_progress()
             bottom = by - P(4)
 
         tasks = model.tasks_on(self.app.store.data["tasks"], day)
@@ -263,6 +265,14 @@ class DesktopCalendar(PinnedWindow):
                                  text=f"+{hidden} more")
             bb = c.bbox(item)
             self.hits.append((bb[0], bb[1], bb[2], bb[3], "day", day, None))
+
+    def update_progress(self):
+        """Move today's progress bar to the current minute. Only the bar's line changes, so the once-a-minute
+        update costs next to nothing (a full redraw of a busy month takes 15-30 ms)."""
+        if self._progress:
+            item, x, length, y = self._progress
+            now = datetime.now()
+            self.canvas.coords(item, x, y, x + length * (now.hour * 60 + now.minute) / 1440, y)
 
     def to_front(self, focus=True):
         super().to_front(focus)

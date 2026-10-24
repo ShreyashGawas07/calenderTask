@@ -32,8 +32,16 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintype
 user32.SetWinEventHook.restype = wintypes.HANDLE
 user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WINEVENTPROC,
                                    wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+user32.UnhookWinEvent.restype = wintypes.BOOL
 user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.SystemParametersInfoW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+user32.GetMessageW.restype = wintypes.BOOL
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, ctypes.c_uint, ctypes.c_uint]
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 
 GWLP_HWNDPARENT = -8
 GA_ROOT = 2
@@ -132,15 +140,9 @@ class ForegroundHook:
 
     def __init__(self, widget, on_change):
         self.handle = None
-        try:
-            tcl = ctypes.CDLL(f"tcl{widget.tk.call('info', 'tclversion').replace('.', '')}t")
-        except OSError:
+        tcl = self._loaded_tcl(widget)
+        if tcl is None:
             return
-        tcl.Tcl_EvalEx.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
-        tcl.Tcl_SaveInterpState.restype = ctypes.c_void_p
-        tcl.Tcl_SaveInterpState.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        tcl.Tcl_RestoreInterpState.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        tcl.Tcl_InterpDeleted.argtypes = [ctypes.c_void_p]
         interp = widget.tk.interpaddr()
         self._command = widget.register(on_change)
         script = f"after 0 {self._command}".encode()
@@ -154,6 +156,29 @@ class ForegroundHook:
         self._proc = WINEVENTPROC(fire)  # kept referenced while hooked
         self.handle = user32.SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None,
                                              self._proc, 0, 0, WINEVENT_OUTOFCONTEXT) or None
+        if not self.handle:
+            widget.deletecommand(self._command)
+
+    @staticmethod
+    def _loaded_tcl(widget):
+        """The Tcl library _tkinter is already using (never load another copy), or None."""
+        ver = widget.tk.call("info", "tclversion").replace(".", "")
+        for name in (f"tcl{ver}t.dll", f"tcl{ver}.dll", f"tcl9tcl{ver}.dll"):
+            module = kernel32.GetModuleHandleW(name)
+            if module:
+                break
+        else:
+            return None
+        tcl = ctypes.CDLL(name, handle=module)
+        tcl.Tcl_EvalEx.restype = ctypes.c_int
+        tcl.Tcl_EvalEx.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+        tcl.Tcl_SaveInterpState.restype = ctypes.c_void_p
+        tcl.Tcl_SaveInterpState.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        tcl.Tcl_RestoreInterpState.restype = ctypes.c_int
+        tcl.Tcl_RestoreInterpState.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        tcl.Tcl_InterpDeleted.restype = ctypes.c_int
+        tcl.Tcl_InterpDeleted.argtypes = [ctypes.c_void_p]
+        return tcl
 
     def stop(self):
         if self.handle:
