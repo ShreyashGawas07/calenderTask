@@ -1,0 +1,4 @@
+pystray==0.19.5
+pillow==13.0.0
+holidays==0.107
+openpyxl==3.1.5
