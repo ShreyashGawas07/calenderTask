@@ -38,6 +38,11 @@ user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.SystemParametersInfoW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
 user32.GetMessageW.restype = wintypes.BOOL
 user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, ctypes.c_uint, ctypes.c_uint]
+user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, ctypes.c_uint, ctypes.c_uint,
+                                ctypes.c_uint]
+user32.SetTimer.restype = ctypes.c_size_t
+user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, ctypes.c_uint, ctypes.c_void_p]
+user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
@@ -48,7 +53,8 @@ GA_ROOT = 2
 HWND_TOP, HWND_BOTTOM, HWND_TOPMOST, HWND_NOTOPMOST = 0, 1, -1, -2
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
-WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
+WM_HOTKEY, WM_QUIT, WM_TIMER, WM_USER, WM_APP = 0x0312, 0x0012, 0x0113, 0x0400, 0x8000
+PROBE_ID, CHORD_ID = 0xBFF0, 0x1000  # hotkey ids: probing, and a chord's temporary second keys
 EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT = 0x0003, 0x0000
 ERROR_ALREADY_EXISTS = 183
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -187,30 +193,117 @@ class ForegroundHook:
             self._widget.deletecommand(self._command)
 
 
-class HotkeyThread(threading.Thread):
-    """Registers Ctrl+Alt+<key> and calls `on_press()` (from this thread) when it is pressed."""
+def probe_hotkey(mods, vk):
+    """True if another program (or this one) has already registered this key combination."""
+    if user32.RegisterHotKey(None, PROBE_ID, mods | MOD_NOREPEAT, vk):
+        user32.UnregisterHotKey(None, PROBE_ID)
+        return False
+    return True
 
-    def __init__(self, key, on_press):
+
+class HotkeyThread(threading.Thread):
+    """Global shortcuts: registers each one's first step and calls `on_action(action)` (from this
+    thread) when it is pressed. A two-step shortcut's second keys are registered only for
+    `chord_ms` after its first step (a thread timer), then released. Blocks in GetMessage: no polling.
+
+    bindings: [(action, ((mods, vk), ...))] with RegisterHotKey modifier bits.
+    """
+
+    def __init__(self, bindings, on_action, chord_ms=1500):
         super().__init__(daemon=True)
-        self.key = key.upper()[:1] or "C"
-        self.on_press = on_press
+        self.on_action = on_action
+        self.chord_ms = chord_ms
+        self._pending = list(bindings)
+        self.failed = []          # actions whose keys could not be registered
+        self.active = set()       # first steps registered now, as (mods, vk)
         self.registered = threading.Event()
-        self.ok = False
+        self._first = {}          # hotkey id -> [(action, second step or None)]
+        self._ids = {}            # first step -> hotkey id
+        self._chord = {}          # temporary id -> action, while a chord is waiting
+        self._timer = 0
+        self.tid = None
 
     def run(self):
         self.tid = kernel32.GetCurrentThreadId()
-        self.ok = bool(user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord(self.key)))
-        self.registered.set()
-        if not self.ok:
-            return
         msg = wintypes.MSG()
+        user32.PeekMessageW(ctypes.byref(msg), None, WM_USER, WM_USER, 0)  # make the message queue
+        self._apply()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == WM_HOTKEY:
-                self.on_press()
-        user32.UnregisterHotKey(None, 1)
+                self._pressed(msg.wParam)
+            elif msg.message == WM_TIMER and msg.wParam == self._timer:
+                self._end_chord()
+            elif msg.message == WM_APP:
+                self._apply()
+        self._end_chord()
+        for hid in self._first:
+            user32.UnregisterHotKey(None, hid)
+
+    def _apply(self):
+        self._end_chord()
+        for hid in self._first:
+            user32.UnregisterHotKey(None, hid)
+        groups = {}
+        for action, steps in self._pending:
+            if steps:
+                groups.setdefault(steps[0], []).append((action, steps[1] if len(steps) > 1 else None))
+        self._first, self._ids, failed = {}, {}, []
+        for hid, (step, entries) in enumerate(groups.items(), start=1):
+            if user32.RegisterHotKey(None, hid, step[0] | MOD_NOREPEAT, step[1]):
+                self._first[hid] = entries
+                self._ids[step] = hid
+            else:
+                failed += [a for a, _ in entries]
+        self.failed = failed
+        self.active = set(self._ids)
+        self.registered.set()
+
+    def _pressed(self, hid):
+        if hid in self._chord:
+            action = self._chord[hid]
+            self._end_chord()
+            self.on_action(action)
+            return
+        self._end_chord()
+        entries = self._first.get(hid, [])
+        seconds = [(a, s) for a, s in entries if s]
+        if not seconds:
+            for action, _ in entries:
+                self.on_action(action)
+            return
+        first_mods = next(step for step, i in self._ids.items() if i == hid)[0]
+        nid = CHORD_ID
+        for action, (mods, vk) in seconds:
+            variants = {mods} | ({first_mods} if mods == 0 else set())  # modifiers released or still held
+            for m in variants:
+                if user32.RegisterHotKey(None, nid, m | MOD_NOREPEAT, vk):
+                    self._chord[nid] = action
+                    nid += 1
+                elif (m, vk) in self._ids:  # one of our own first steps: let the chord win
+                    self._chord[self._ids[(m, vk)]] = action
+        self._timer = user32.SetTimer(None, 0, self.chord_ms, None)
+
+    def _end_chord(self):
+        if self._timer:
+            user32.KillTimer(None, self._timer)
+            self._timer = 0
+        for hid in self._chord:
+            if hid >= CHORD_ID:
+                user32.UnregisterHotKey(None, hid)
+        self._chord = {}
+
+    def set_bindings(self, bindings, timeout=2.0):
+        """Replace the shortcuts (from any thread); returns the actions that could not be registered."""
+        self._pending = list(bindings)
+        if self.tid is None or not self.is_alive():
+            return [a for a, s in bindings if s]
+        self.registered.clear()
+        user32.PostThreadMessageW(self.tid, WM_APP, 0, 0)
+        self.registered.wait(timeout)
+        return list(self.failed)
 
     def stop(self):
-        if self.ok:
+        if self.tid is not None:
             user32.PostThreadMessageW(self.tid, WM_QUIT, 0, 0)
 
 

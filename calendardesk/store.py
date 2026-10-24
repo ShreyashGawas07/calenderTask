@@ -1,4 +1,5 @@
 """JSON storage with atomic writes and daily backups."""
+import copy
 import json
 import os
 import shutil
@@ -10,7 +11,9 @@ KEEP_BACKUPS = 30
 DEFAULT_SETTINGS = {
     "opacity": 0.88,
     "start_with_windows": False,
-    "hotkey": "C",
+    "hotkey": "C",  # letter of the default show / hide shortcut, Ctrl+Alt+<letter>
+    "shortcuts": {},  # {command: {"keys": "Ctrl+Shift+O, D", "global": False}}; missing = default
+    "global_shortcuts": True,
     "rollover": True,
     "show_holidays": True,
     "show_week_numbers": True,
@@ -41,7 +44,7 @@ def default_dir():
 
 def empty_data():
     return {"version": 1, "tasks": [], "countdowns": [], "notes": [],
-            "date_colors": {}, "reminders": {}, "settings": dict(DEFAULT_SETTINGS)}
+            "date_colors": {}, "reminders": {}, "settings": copy.deepcopy(DEFAULT_SETTINGS)}
 
 
 class Store:
@@ -63,7 +66,7 @@ class Store:
                 # Keep the broken file for manual recovery instead of overwriting it.
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 shutil.copy2(self.path, os.path.join(self.folder, f"data.corrupt-{stamp}.json"))
-        settings = dict(DEFAULT_SETTINGS)
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
         settings.update(data.get("settings") or {})
         data["settings"] = settings
         return data

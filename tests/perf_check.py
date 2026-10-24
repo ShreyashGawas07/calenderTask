@@ -40,6 +40,37 @@ class PROCESSENTRY32W(ctypes.Structure):
                 ("szExeFile", wintypes.WCHAR * 260)]
 
 
+class THREADENTRY32(ctypes.Structure):
+    _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ThreadID", wintypes.DWORD),
+                ("th32OwnerProcessID", wintypes.DWORD), ("tpBasePri", ctypes.c_long),
+                ("tpDeltaPri", ctypes.c_long), ("dwFlags", wintypes.DWORD)]
+
+
+def thread_cycles():
+    """{thread id: CPU cycles} for every thread of this process, Python's and the native ones."""
+    k32 = ctypes.WinDLL("kernel32")
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.OpenThread.restype = wintypes.HANDLE
+    k32.QueryThreadCycleTime.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_ulonglong)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(0x4, 0)  # TH32CS_SNAPTHREAD
+    e = THREADENTRY32()
+    e.dwSize = ctypes.sizeof(e)
+    out = {}
+    ok = k32.Thread32First(snap, ctypes.byref(e))
+    while ok:
+        if e.th32OwnerProcessID == os.getpid():
+            h = k32.OpenThread(0x0800, False, e.th32ThreadID)  # THREAD_QUERY_LIMITED_INFORMATION
+            n = ctypes.c_ulonglong()
+            if h and k32.QueryThreadCycleTime(h, ctypes.byref(n)):
+                out[e.th32ThreadID] = n.value
+            if h:
+                k32.CloseHandle(h)
+        ok = k32.Thread32Next(snap, ctypes.byref(e))
+    k32.CloseHandle(snap)
+    return out
+
+
 def _cycles():
     k32 = ctypes.WinDLL("kernel32")
     k32.GetCurrentProcess.restype = wintypes.HANDLE
@@ -90,6 +121,7 @@ def main():
     n_tasks = int(sys.argv[2]) if len(sys.argv) > 2 else 200
     store = Store(tempfile.mkdtemp(prefix="cd-perf-"))
     store.settings["today_glow"] = glow
+    store.settings["hotkey"] = "K"  # leave Ctrl+Alt+C to a running CalendarDesk (a "key taken" box costs CPU)
     today = date.today()
     for i in range(n_tasks):
         store.data["tasks"].append(model.new_task(f"task {i}", today.replace(day=1 + i % 28)))
@@ -106,11 +138,19 @@ def main():
     def start():
         result["hz"] = cycles_per_second()
         result["t0"] = (_cycles(), time.monotonic())
+        result["threads0"] = thread_cycles()
         app.root.after(MEASURE_S * 1000, stop)
 
     def stop():
         cpu0, wall0 = result["t0"]
-        result["cpu"] = 100 * (_cycles() - cpu0) / result["hz"] / (time.monotonic() - wall0)
+        wall = time.monotonic() - wall0
+        result["cpu"] = 100 * (_cycles() - cpu0) / result["hz"] / wall
+        names = {t.native_id: t.name for t in threading.enumerate()}
+        names[app.hotkey.tid] = "hotkey"
+        before = result["threads0"]
+        result["per_thread"] = sorted(((100 * (c - before.get(tid, 0)) / result["hz"] / wall,
+                                        names.get(tid, f"native {tid}")) for tid, c in thread_cycles().items()),
+                                      reverse=True)
         result["threads"] = threading.active_count()
         result["mem"] = working_set_mb()
         result["kids"] = child_processes()
@@ -121,6 +161,7 @@ def main():
     ok = result["cpu"] < 0.1 and result["threads"] <= 3 and not result["kids"] and result["mem"] < 70
     print(f"glow {'on' if glow else 'off'}: CPU {result['cpu']:.3f}% of one core, threads {result['threads']}, "
           f"memory {result['mem']:.1f} MB, child processes {result['kids'] or 0} -> {'PASS' if ok else 'FAIL'}")
+    print("  by thread: " + ", ".join(f"{name} {pct:.3f}%" for pct, name in result["per_thread"][:4]))
     sys.exit(0 if ok else 1)
 
 

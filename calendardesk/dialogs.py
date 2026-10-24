@@ -6,8 +6,9 @@ from datetime import date, datetime, timedelta
 import tkinter.font as tkfont
 from tkinter import colorchooser, messagebox, ttk
 
-from . import model, theme, winapi
+from . import model, shortcuts, theme, winapi
 from .holidays_in import holiday_name
+from .shortcut_ui import ShortcutsTab
 
 REMIND_CHOICES = [("At the time", 0), ("5 min before", 5), ("10 min before", 10), ("15 min before", 15),
                   ("30 min before", 30), ("1 hour before", 60), ("2 hours before", 120), ("1 day before", 1440)]
@@ -484,7 +485,6 @@ class SettingsDialog(Dialog):
             "rollover": tk.BooleanVar(value=s["rollover"]),
             "locked": tk.BooleanVar(value=s["locked"]),
             "start_with_windows": tk.BooleanVar(value=app.startup_enabled()),
-            "hotkey": tk.StringVar(value=s["hotkey"]),
             "theme": tk.StringVar(value=theme.THEME_NAMES.get(s["theme"], "Dark")),
             "font_family": tk.StringVar(value=s["font_family"]),
             "auto_scale": tk.BooleanVar(value=s["auto_scale"]),
@@ -500,11 +500,13 @@ class SettingsDialog(Dialog):
         tk.Label(self, text="Changes show on your calendar and cards right away.  "
                             "Save keeps them · Cancel puts everything back.",
                  bg="#e7f5ff", fg="#1864ab", anchor="w", padx=8, pady=5).pack(fill="x", pady=(0, 8))
-        nb = ttk.Notebook(self)
+        self.nb = nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True)
         nb.add(self._size(nb), text="Size")
         nb.add(self._appearance(nb), text="Appearance")
         nb.add(self._general(nb), text="General")
+        self.shortcuts = ShortcutsTab(nb, self)
+        nb.add(self.shortcuts, text="Shortcuts")
         nb.add(self._school(nb), text="School weeks")
         nb.add(self._data(nb), text="Data & backup")
         b = ttk.Frame(self)
@@ -513,7 +515,7 @@ class SettingsDialog(Dialog):
         ttk.Button(b, text="Cancel", command=self.close).pack(side="right", padx=6)
         ttk.Button(b, text="Reset size to default", command=self._default_size).pack(side="left")
         for key, var in self.vars.items():
-            if key not in ("start_with_windows", "hotkey"):
+            if key != "start_with_windows":
                 self.watch_var(var, lambda k=key: self._changed(k))
         # Lift the calendar and cards above other windows so the preview is visible.
         for w in app._pinned():
@@ -553,7 +555,13 @@ class SettingsDialog(Dialog):
         values["font_family"] = values["font_family"].strip() or "Segoe UI"
         values["accent"], values["colors"] = self.accent, dict(self.colors)
         values["school_terms"] = [dict(t) for t in self.terms]
+        values["shortcuts"] = self.shortcuts.changed_values()
+        values["global_shortcuts"] = self.shortcuts.global_on.get()
         return values
+
+    def show_tab(self, name):
+        if name == "shortcuts":
+            self.nb.select(self.shortcuts)
 
     # -- tabs --------------------------------------------------------------
     def _size(self, nb):
@@ -624,12 +632,8 @@ class SettingsDialog(Dialog):
     def _general(self, nb):
         f = ttk.Frame(nb, padding=10)
         v = self.vars
-        ttk.Label(f, text="Show / edit hotkey").grid(row=2, column=0, sticky="w", pady=4)
-        hk = ttk.Frame(f)
-        hk.grid(row=2, column=1, sticky="w")
-        ttk.Label(hk, text="Ctrl + Alt +").pack(side="left")
-        ttk.Combobox(hk, textvariable=v["hotkey"], values=[chr(c) for c in range(65, 91)], width=3,
-                     state="readonly").pack(side="left", padx=4)
+        ttk.Label(f, text="Keyboard shortcuts for every command, including show / hide, are on the "
+                          "Shortcuts tab.", foreground="#555").grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
         checks = [("week_starts_monday", "Week starts on Monday"),
                   ("show_week_numbers", "Show week numbers (school week when in a term)"),
                   ("show_holidays", "Show Indian public holidays"),
@@ -792,6 +796,13 @@ class SettingsDialog(Dialog):
         values = self.values()
         if values is None:
             messagebox.showerror("Settings", "Text size must be a number.", parent=self)
+            return
+        bad = self.shortcuts.first_error()
+        if bad:
+            self.nb.select(self.shortcuts)
+            self.shortcuts.select(bad[0])
+            messagebox.showerror("Settings", f"{shortcuts.LABELS[bad[0]]}: {bad[1]}\n\n"
+                                             "Change or clear that shortcut, then Save.", parent=self)
             return
         if self._preview_job:
             self.after_cancel(self._preview_job)

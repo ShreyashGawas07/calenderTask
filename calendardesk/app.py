@@ -6,7 +6,7 @@ import tkinter as tk
 from datetime import date, datetime, timedelta
 from tkinter import colorchooser, filedialog, messagebox
 
-from . import model, theme, winapi
+from . import model, shortcuts, theme, winapi
 from .desktop_cal import DesktopCalendar
 from .day_panel import DayPanel
 from .dialogs import CountdownDialog, CountdownManager, SearchDialog, SettingsDialog, TaskDialog
@@ -39,8 +39,12 @@ class App:
         theme.apply(self.settings)
         self.calendar = DesktopCalendar(self)
         self._open_desktop_items()
-        self.hotkey = None
-        self._start_hotkey()
+        self.key_map, self._key_wait, self._key_job = {}, None, None
+        self.hotkey = winapi.HotkeyThread([], self.post, chord_ms=shortcuts.CHORD_MS)
+        self.hotkey.start()
+        self.hotkey.registered.wait(2)
+        self.apply_shortcuts()
+        self.bind_shortcut_keys(self.calendar)
         self.tray = None
         if tray:
             from .tray import Tray
@@ -93,16 +97,80 @@ class App:
         return cls(self, *args)
 
     # -- hotkey / tray queue -------------------------------------------------
-    def _start_hotkey(self):
-        if self.hotkey:
-            self.hotkey.stop()
-        self.hotkey = winapi.HotkeyThread(self.settings["hotkey"], lambda: self.post("toggle_front"))
-        self.hotkey.start()
-        self.hotkey.registered.wait(2)
-        if not self.hotkey.ok:
+    # -- keyboard shortcuts ----------------------------------------------------
+    def apply_shortcuts(self, warn=True):
+        """Register the global shortcuts and rebuild the calendar's key map from the settings."""
+        eff = shortcuts.effective(self.settings)
+        bindings, self.key_map = [], {}
+        for action, b in eff.items():
+            steps = shortcuts.parse(b["keys"])
+            if not steps:
+                continue
+            if b["global"]:
+                if self.settings.get("global_shortcuts", True):
+                    bindings.append((action, tuple(shortcuts.win32(st) for st in steps)))
+            else:
+                self.key_map.setdefault(steps[0], []).append((steps[1] if len(steps) > 1 else None, action))
+        failed = self.hotkey.set_bindings(bindings)
+        if failed and warn:
+            names = "\n".join(f"  {shortcuts.LABELS[a]}: {eff[a]['keys']}" for a in failed)
             self.root.after(500, lambda: messagebox.showwarning(
-                "CalendarDesk", f"Ctrl+Alt+{self.settings['hotkey']} is already used by another program.\n"
-                                "Pick a different letter in Settings."))
+                "CalendarDesk", f"These shortcuts are already used by another program:\n{names}\n\n"
+                                "Change them in Settings → Shortcuts."))
+        return failed
+
+    def pause_global_shortcuts(self):
+        """While a shortcut is being recorded, so pressing it doesn't run it."""
+        self.hotkey.set_bindings([])
+
+    def shortcut_taken(self, step):
+        """True if another program has registered this step (our own registrations don't count)."""
+        mods, vk = shortcuts.win32(step)
+        return (mods, vk) not in self.hotkey.active and winapi.probe_hotkey(mods, vk)
+
+    def bind_shortcut_keys(self, view):
+        view.win.bind("<KeyPress>", lambda e: self._key(e, view), add="+")
+
+    def _key(self, e, view):
+        """Calendar shortcuts: one Tk binding per window; nothing runs while typing in a box."""
+        try:
+            if e.widget.winfo_class() in ("Entry", "Text", "Spinbox", "TEntry", "TCombobox", "TSpinbox"):
+                return None
+        except (AttributeError, tk.TclError):
+            return None
+        step = shortcuts.step_from_tk(e.state, e.keycode)
+        if step is None:
+            return None  # a modifier on its own: a waiting chord keeps waiting
+        wait = self._key_wait
+        self._end_key_wait()
+        if wait:
+            first_mods, seconds = wait
+            for second, action in seconds:
+                if step == second or (not second[0] and step == (first_mods, second[1])):
+                    self._shortcut(action, view)
+                    return "break"
+        entries = self.key_map.get(step)
+        if not entries:
+            return None
+        single = [a for second, a in entries if second is None]
+        if single:
+            self._shortcut(single[0], view)
+        else:
+            self._key_wait = (step[0], entries)
+            self._key_job = self.root.after(shortcuts.CHORD_MS, self._end_key_wait)
+        return "break"
+
+    def _end_key_wait(self):
+        if self._key_job:
+            self.root.after_cancel(self._key_job)
+        self._key_wait = self._key_job = None
+
+    def _shortcut(self, action, view):
+        nav = {"next_month": lambda: view.go(1), "prev_month": lambda: view.go(-1), "go_today": view.go_today}
+        (nav.get(action) or (lambda: self._run_action(action)))()
+
+    def shortcuts_dialog(self):
+        self._single(SettingsDialog).show_tab("shortcuts")
 
     def post(self, action):
         """Run a named action on the Tk thread. Safe to call from the hotkey and tray threads."""
@@ -118,26 +186,39 @@ class App:
             "new_countdown": self.edit_countdown, "show_all": self.show_all,
             "countdowns": self.manage_countdowns, "search": self.search,
             "export": self.export, "settings": self.settings_dialog, "quit": self.quit,
-            "undo_settings": self.undo_settings,
+            "undo_settings": self.undo_settings, "open_today": lambda: self.open_day(self.today()),
+            "menu": self.calendar.open_menu, "quick_add": self.calendar.quick_add_today,
+            "next_month": lambda: self.calendar.go(1), "prev_month": lambda: self.calendar.go(-1),
+            "go_today": self.calendar.go_today, "send_back": self.all_to_back,
+            "shortcuts": self.shortcuts_dialog,
         }.get(action)
         if handler:
             handler()
 
-    def main_menu(self, parent):
+    def main_menu(self, parent, at=None):
+        eff = shortcuts.effective(self.settings)
         m = tk.Menu(parent, tearoff=0)
-        m.add_command(label="New note", command=self.new_note)
-        m.add_command(label="New countdown…", command=self.edit_countdown)
-        m.add_command(label="Countdowns…", command=self.manage_countdowns)
-        m.add_command(label="Show all notes and cards", command=self.show_all)
-        m.add_command(label="Mini calendar", command=self.toggle_mini)
+
+        def item(label, command, action, **kw):
+            m.add_command(label=label, command=command, accelerator=eff[action]["keys"], **kw)
+
+        item("New task…", lambda: self.edit_task(day=self.today()), "new_task")
+        item("New note", self.new_note, "new_note")
+        item("New countdown…", self.edit_countdown, "new_countdown")
+        item("Countdowns…", self.manage_countdowns, "countdowns")
+        item("Show all notes and cards", self.show_all, "show_all")
+        item("Mini calendar", self.toggle_mini, "toggle_mini")
+        item("Search…", self.search, "search")
         m.add_separator()
-        m.add_command(label="Export to Excel…", command=self.export)
-        m.add_command(label="Settings…", command=self.settings_dialog)
-        m.add_command(label="Undo last settings change", command=self.undo_settings,
-                      state="normal" if self.settings_undo else "disabled")
+        item("Export to Excel…", self.export, "export")
+        item("Settings…", self.settings_dialog, "settings")
+        item("Keyboard shortcuts…", self.shortcuts_dialog, "shortcuts")
+        item("Undo last settings change", self.undo_settings, "undo_settings",
+             state="normal" if self.settings_undo else "disabled")
         m.add_separator()
-        m.add_command(label="Exit CalendarDesk", command=self.quit)
-        m.tk_popup(parent.winfo_pointerx(), parent.winfo_pointery())
+        item("Exit CalendarDesk", self.quit, "quit")
+        x, y = at or (parent.winfo_pointerx(), parent.winfo_pointery())
+        m.tk_popup(x, y)
 
     # -- desktop windows -----------------------------------------------------
     def _pinned(self):
@@ -196,6 +277,7 @@ class App:
             self.mini = None
         else:
             self.mini = MiniCalendar(self)
+            self.bind_shortcut_keys(self.mini)
             self.mini.to_front()  # just asked for it, so show it; it drops back when you click elsewhere
 
     def show_all(self):
@@ -418,11 +500,11 @@ class App:
                 "notes": {nid: w.geometry() for nid, w in self.notes.items()}}
 
     def preview_settings(self, values):
-        """Show settings on screen without saving. Startup and hotkey only change on Save."""
+        """Show settings on screen without saving. Startup and shortcuts only change on Save."""
         s = self.settings
         old_scale = s["card_scale"]
         for k, v in values.items():
-            if k not in ("start_with_windows", "hotkey", "calendar_size"):
+            if k not in ("start_with_windows", "hotkey", "shortcuts", "global_shortcuts", "calendar_size"):
                 s[k] = copy.deepcopy(v)
         theme.apply(s)
         if values.get("calendar_size"):
@@ -467,12 +549,13 @@ class App:
                 winapi.set_startup(startup)
             except OSError as err:
                 messagebox.showerror("Settings", f"Could not change the startup setting:\n{err}")
-        hotkey_changed = values["hotkey"] != self.settings["hotkey"]
+        new_keys = {k: copy.deepcopy(values[k]) for k in ("hotkey", "shortcuts", "global_shortcuts") if k in values}
+        keys_changed = any(self.settings.get(k) != v for k, v in new_keys.items())
         self.preview_settings(values)
         self.settings["start_with_windows"] = winapi.get_startup()
-        self.settings["hotkey"] = values["hotkey"]
-        if hotkey_changed:
-            self._start_hotkey()
+        self.settings.update(new_keys)
+        if keys_changed:
+            self.apply_shortcuts()
         self._store_geometries()
         if undo:
             self.settings_undo = undo

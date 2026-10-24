@@ -452,3 +452,17 @@ class DesktopCalendar(PinnedWindow):
 
     def _main_menu(self):
         self.app.main_menu(self.win)
+
+    def open_menu(self):
+        """The ☰ menu from the keyboard: bring the calendar forward and open it under its top-left corner."""
+        self.to_front()
+        self.app.main_menu(self.win, at=(self.win.winfo_rootx() + self.px(8), self.win.winfo_rooty() + self.px(30)))
+
+    def quick_add_today(self):
+        """The smart-typing box on today's cell, from the keyboard."""
+        today = self.app.today()
+        if (self.year, self.month) != (today.year, today.month):
+            self.go_today()
+        cell = next((h for h in self.hits if h[4] == "cell" and h[5] == today), None)
+        if cell:
+            self._quick_add(today, cell)

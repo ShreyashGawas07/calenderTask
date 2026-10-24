@@ -17,7 +17,9 @@ anything to startup. To start it with Windows, tick the box in Settings.
 
 | To… | Do this |
 |---|---|
-| Bring the calendar in front of other windows | `Ctrl+Alt+C` (change the letter in Settings); press it again or click another app to send it back |
+| Bring the calendar in front of other windows | `Ctrl+Alt+C`; press it again, press `Esc`, or click another app to send it back |
+| Use the keyboard | With the calendar in front: `Ctrl+Shift+O, D` opens today's day panel, `Ctrl+Shift+C, H` the ☰ menu, `Ctrl+Shift+N` adds a task to today, `Ctrl+N` new task, `Ctrl+F` search, `Ctrl+,` settings, `←` `→` month, `Home` today, `Ctrl+M` mini calendar. `A, B` means press A, then B within 1.5 s |
+| Choose your own shortcuts | Settings → **Shortcuts** (or ☰ → *Keyboard shortcuts…*): pick a command, **Change…**, press the keys. Every command can have one, on the calendar only or everywhere (global). You can't save a shortcut that another command, Windows or another running program already uses; you're warned about keys common in other apps, Windows Calculator's keys and Start-menu shortcut keys. *Global shortcuts on* frees every global key at once |
 | Add a task fast | Double-click anywhere in a day, type, press Enter. Smart typing understands times, dates, repeats and reminders: `call mom 7pm tomorrow`, `gym every mon and thu 7am`, `rent 1st every month`, `pay bill 6pm!` (`!` or `remind me` = reminder). A line under the box shows what it understood |
 | Add a task with time, reminder, repeat or colour | **+ Task**, or right-click a day → *Add task…* |
 | Edit a task | Click it once (or right-click → *Edit task…*) |
@@ -35,7 +37,7 @@ anything to startup. To start it with Windows, tick the box in Settings.
 | Resize a countdown card | Drag its bottom-right corner; double-click to change its colour and style (Minimal, Solid, Gradient, Progress ring) |
 | Change the look | Settings → **Appearance**: theme (Dark, Light, Glass, Paper), accent colour, font, colours for text, weekends, holidays and grid, and the four "today" highlights (glow, TODAY badge, week row, day-progress bar), each on or off |
 
-Everything stays on the wallpaper behind your apps; only the hotkey (or clicking it on the desktop) brings it
+Everything stays on the wallpaper behind your apps; only the show / hide shortcut (or clicking it on the desktop) brings it
 forward, and it drops back as soon as you click another app. Reminder pop-ups are the one exception, so
 you don't miss them.
 

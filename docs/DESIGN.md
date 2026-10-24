@@ -18,8 +18,17 @@ uninstalled.
 
 - **Desktop calendar**: borderless, semi-transparent month view owned by the
   desktop window (`Progman`) and kept at the bottom of the z-order, so it sits on
-  the wallpaper and survives *Show desktop*. `Ctrl+Alt+<key>` (default `C`)
-  brings it to the front for editing; press again or click away to send it back.
+  the wallpaper and survives *Show desktop*. `Ctrl+Alt+C` brings it to the front
+  for editing; press again or click away to send it back.
+- **Keyboard shortcuts**: every command has a configurable shortcut (Settings →
+  Shortcuts), one step (`Ctrl+F`) or a two-step chord (`Ctrl+Shift+O, D`, second key
+  within 1.5 s). Each works on the calendar only (a Tk key binding on the calendar and
+  mini calendar, ignored while typing) or everywhere (`RegisterHotKey`). Conflicts with
+  other commands, Windows' reserved keys and keys another program registered (found by
+  trying to register them) block saving; keys common in other apps, Calculator's keys
+  and Start-menu `.lnk` shortcut keys give a warning. Stored as differences from the
+  defaults in `settings["shortcuts"]`; the old `hotkey` letter still sets the default
+  show / hide key. See `docs/superpowers/specs/2026-10-25-keyboard-shortcuts-design.md`.
 - **Tasks**: double-click a day to add, with smart typing ("call mom 7pm
   tomorrow", "gym every mon and thu 7am", "rent 1st every month!"); time,
   reminder, colour, checklist, formatted notes; repeat daily / weekly (chosen
@@ -57,6 +66,8 @@ calendardesk/
   store.py                JSON storage in %APPDATA%\CalendarDesk, atomic writes, daily backups
   holidays_in.py          cached India holidays
   winapi.py               DPI, desktop pinning, global hotkey thread, single instance, startup key
+  shortcuts.py            commands, shortcut text, conflict checks, .lnk shortcut keys (pure)
+  shortcut_ui.py          Settings → Shortcuts tab and the key recorder
   app.py                  root controller: actions from other threads, ticks, reminders, windows
   desktop_cal.py          the wallpaper calendar (single Canvas)
   day_panel.py            day panel: task cards, checklists, notes, smart add box
@@ -72,7 +83,9 @@ tests/                    unit tests (model, parser, rich notes, animation);
 
 ## Performance
 
-One process, three threads (Tk, hotkey, tray), no polling. The hotkey and tray
+One process, three threads (Tk, hotkey, tray), no polling. The hotkey thread
+registers every global shortcut and sleeps in `GetMessage`; a chord's second keys
+are registered only for 1.5 s after its first step (a thread timer). The hotkey and tray
 threads hand actions to Tk with `root.after(0, …)`. The "drop back to the
 wallpaper" check runs every 400 ms, and only while something is raised. Today's glow
 breathes only while you can see it (the calendar raised, or the desktop itself in

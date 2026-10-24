@@ -221,6 +221,11 @@ class MiniCalendar(PinnedWindow):
         self.year, self.month = shift_month(self.year, self.month, delta)
         self.redraw()
 
+    def go_today(self):
+        t = self.app.today()
+        self.year, self.month, self.selected = t.year, t.month, t
+        self.redraw()
+
     def redraw(self):
         c = self.canvas
         c.delete("all")

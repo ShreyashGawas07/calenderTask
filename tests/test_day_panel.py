@@ -24,6 +24,7 @@ class PanelTestCase(unittest.TestCase):
         from calendardesk.app import App
         self.store = Store(tempfile.mkdtemp(prefix="cd-test-"))
         self.store.settings["hotkey"] = "K"  # leave Ctrl+Alt+C to a running CalendarDesk
+        self.store.settings["rollover"] = False  # DAY is fixed; once it is past, rollover would move the tasks
         self.store.data["tasks"].extend(tasks)
         self.app = App(self.store, tray=False)
         self.errors = []
