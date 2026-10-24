@@ -40,6 +40,7 @@ class DesktopCalendar(PinnedWindow):
         self._fg_hook = winapi.ForegroundHook(self.win, self._foreground_changed)
         self.zoom = 1.0
         self._click_job = None
+        self._buttons = {}       # header item -> action, rebuilt by each redraw
         self.scale = self.win.winfo_fpixels("1i") / 96.0
 
         c = self.canvas
@@ -48,6 +49,13 @@ class DesktopCalendar(PinnedWindow):
         c.bind("<Double-Button-1>", self._double)
         c.bind("<Button-3>", self._context)
         c.bind("<MouseWheel>", lambda e: self.go(-1 if e.delta > 0 else 1))
+        # Item binds are made once, per tag: a bind made in redraw() would register a new Tcl command
+        # each time, and canvas.delete() never frees those.
+        c.tag_bind("btn", "<Button-1>", self._button_click)
+        c.tag_bind("btn", "<Enter>", lambda e: c.config(cursor="hand2"))
+        c.tag_bind("btn", "<Leave>", lambda e: c.config(cursor=""))
+        c.tag_bind("grip", "<Enter>", lambda e: c.config(cursor="size_nw_se"))
+        c.tag_bind("grip", "<Leave>", lambda e: c.config(cursor=""))
         locked = lambda: self.app.settings["locked"]
         self.make_draggable(c, on_done=self._save_geometry, locked=locked, tag="drag")
         self.make_resizable(c, on_done=self._save_geometry, locked=locked, tag="grip")
@@ -89,7 +97,7 @@ class DesktopCalendar(PinnedWindow):
         c.configure(bg=theme.BG)
         self.win.configure(bg=theme.BG)
         self.hits, self.glow = [], []
-        self._task_items = {}
+        self._task_items, self._buttons = {}, {}
         self._progress = None
         W, H = c.winfo_width(), c.winfo_height()
         if W < 50 or H < 50:
@@ -164,8 +172,6 @@ class DesktopCalendar(PinnedWindow):
 
         g = max(P(20), 16)
         c.create_polygon(W, H - g, W, H, W - g, H, fill=theme.MUTED, outline="", tags=("grip",))
-        c.tag_bind("grip", "<Enter>", lambda e: c.config(cursor="size_nw_se"))
-        c.tag_bind("grip", "<Leave>", lambda e: c.config(cursor=""))
         self._glow_steady = True
         if self.glow and not self._pulse_job:
             self._pulse_job = self.win.after(1000, self._pulse)
@@ -310,10 +316,14 @@ class DesktopCalendar(PinnedWindow):
 
     def _button(self, item, action):
         c = self.canvas
-        c.tag_bind(item, "<Button-1>", lambda e: action())
-        c.tag_bind(item, "<Enter>", lambda e: c.config(cursor="hand2"))
-        c.tag_bind(item, "<Leave>", lambda e: c.config(cursor=""))
+        c.addtag_withtag("btn", item)
+        self._buttons[item] = action
         self.hits.append((*c.bbox(item), "button", None, None))
+
+    def _button_click(self, e):
+        action = self._buttons.get(next(iter(self.canvas.find_withtag("current")), None))
+        if action:
+            action()
 
     # -- interaction -------------------------------------------------------
     def _hit(self, x, y):
