@@ -147,6 +147,20 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(s.data["tasks"], [])
             self.assertTrue(any(n.startswith("data.corrupt-") for n in os.listdir(d)))
 
+    def test_save_syncs_before_replace(self):
+        """EXTRA-2: the temp file reaches the disk before it replaces data.json."""
+        from unittest import mock
+        calls = []
+        real_replace = os.replace
+        with tempfile.TemporaryDirectory() as d:
+            s = Store(d)
+            s.data["tasks"].append(task(title="x"))
+            with mock.patch("calendardesk.store.os.fsync", side_effect=lambda fd: calls.append("fsync")),                     mock.patch("calendardesk.store.os.replace",
+                               side_effect=lambda a, b: (calls.append("replace"), real_replace(a, b))):
+                s.save()
+            self.assertEqual(calls, ["fsync", "replace"])
+            self.assertEqual(Store(d).data["tasks"][0]["title"], "x")
+
     def test_prune_reminder_state(self):
         with tempfile.TemporaryDirectory() as d:
             s = Store(d)
@@ -225,3 +239,21 @@ class ExportTests(unittest.TestCase):
         header = [c.value for c in ws[1]]
         col = header.index("Checklist")
         self.assertEqual(ws[2][col].value, "1/3: a ✓; b; c")
+
+    def test_text_starting_with_equals_stays_text(self):
+        """BUG-8: titles and notes are never written as formulas."""
+        from openpyxl import load_workbook
+        from calendardesk.export import export_xlsx
+        d = date(2026, 3, 2)
+        t = model.new_task('=HYPERLINK("http://x","click")', d)
+        t["note"] = "=cmd|' /C calc'!A0"
+        data = {"tasks": [t], "countdowns": [], "notes": [{"text": "=2+3"}]}
+        path = os.path.join(tempfile.mkdtemp(), "out.xlsx")
+        export_xlsx(data, path, d)
+        wb = load_workbook(path)
+        ws = wb["Tasks"]
+        header = [c.value for c in ws[1]]
+        for name, value in (("Task", t["title"]), ("Notes", t["note"])):
+            cell = ws[2][header.index(name)]
+            self.assertEqual((cell.value, cell.data_type), (value, "s"), name)
+        self.assertEqual((wb["Notes"]["A2"].value, wb["Notes"]["A2"].data_type), ("=2+3", "s"))

@@ -146,6 +146,56 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual((r["repeat"], r["interval"], r["found"]), ("daily", 1, ["Daily"]))
 
 
+class FalsePositiveTests(unittest.TestCase):
+    """Ordinary words and numbers stay in the title (BUG-5, BUG-6)."""
+
+    def assertKept(self, text):
+        r = p(text)
+        self.assertEqual((r["title"], r["date"], r["time"], r["found"]), (text, BASE, None, []), text)
+
+    def test_numbers_are_not_dates_or_times(self):
+        for text in ("buy 3/4 cup flour", "read pages 1-12", "chapter 2/3 done", "score 3-1",
+                     "pay 2.50 for coffee", "version 2.10 release", "pay 2.50", "add 2 3/4", "steps 1/2/3"):
+            self.assertKept(text)
+
+    def test_sun_and_sat_as_words(self):
+        for text in ("buy sun cream", "the sun also rises", "sat with grandma", "sat exam prep", "sun cream"):
+            self.assertKept(text)
+
+    def test_iso_date(self):
+        r = p("2026-11-05 dentist")
+        self.assertEqual((r["title"], r["date"]), ("dentist", date(2026, 11, 5)))
+        self.assertEqual(p("dentist on 2026-11-05")["date"], date(2026, 11, 5))
+
+    def test_short_weekday_where_it_is_a_date(self):
+        sat, sun = BASE, date(2026, 10, 25)
+        for text, day in (("gym sat", sat), ("gym sun", sun), ("brunch on sun", sun), ("buy sun cream on sat", sat),
+                          ("next sun", date(2026, 11, 1))):
+            r = p(text)
+            self.assertEqual(r["date"], day, text)
+        r = p("gym sat 7am")
+        self.assertEqual((r["title"], r["date"], r["time"]), ("gym", sat, "07:00"))
+        r = p("sun 10am brunch")
+        self.assertEqual((r["title"], r["date"], r["time"]), ("brunch", sun, "10:00"))
+        r = p("swim every sat")
+        self.assertEqual((r["title"], r["weekdays"]), ("swim", [5]))
+        self.assertEqual(p("gym saturday")["title"], "gym")
+        self.assertEqual(p("saturday gym")["date"], sat)
+
+    def test_slash_date_with_context(self):
+        self.assertEqual(p("party on 3/4")["date"], date(2027, 4, 3))
+        r = p("dentist 5/11 3pm")
+        self.assertEqual((r["title"], r["date"], r["time"]), ("dentist", date(2026, 11, 5), "15:00"))
+        self.assertEqual(p("trip 5-11-26")["date"], date(2026, 11, 5))
+        self.assertEqual(p("trip on 5-11")["date"], date(2026, 11, 5))
+
+    def test_dot_time_needs_am_pm_or_at(self):
+        self.assertEqual(p("call 9.30am")["time"], "09:30")
+        r = p("train at 19.00")
+        self.assertEqual((r["title"], r["time"]), ("train", "19:00"))
+        self.assertEqual(p("pay 2.50 at 19:30")["title"], "pay 2.50")
+
+
 class TaskFromQuickTests(unittest.TestCase):
     def test_fields_copied(self):
         from calendardesk.model import task_from_quick

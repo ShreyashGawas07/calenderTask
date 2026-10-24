@@ -45,8 +45,13 @@ class SmartEntry(ttk.Frame):
         ttk.Button(row, text="Add", command=self.submit).pack(side="left", padx=(6, 0))
         self.preview = ttk.Label(self, foreground=MUTED, text=self.HINT)
         self.preview.pack(anchor="w", pady=(2, 0))
-        self.var.trace_add("write", lambda *a: self.update_preview())
+        self._trace = self.var.trace_add("write", lambda *a: self.update_preview())
         self.entry.bind("<Return>", lambda e: self.submit())
+
+    def destroy(self):
+        # Tcl holds the trace callback, and through it this box and the whole panel: free it.
+        self.var.trace_remove("write", self._trace)
+        super().destroy()
 
     def update_preview(self):
         text = self.var.get().strip()
@@ -172,6 +177,7 @@ class TaskCard(ttk.Frame):
         add.pack(fill="x", pady=(2, 4))
         ttk.Label(add, text="+", foreground=MUTED).pack(side="left", padx=(3, 8))
         self.add_entry = ttk.Entry(add)
+        self.add_entry.insert(0, panel.add_drafts.pop(tid, ""))  # typed before a rebuild
         self.add_entry.pack(side="left", fill="x", expand=True)
         self.add_entry.bind("<Return>", lambda e: self.add_item() or "break")
         panel.editor(self.add_entry, (tid, "add", None), lambda: False, lambda: None)
@@ -227,6 +233,7 @@ class TaskCard(ttk.Frame):
         text = self.add_entry.get().strip()
         if not text:
             return
+        self.add_entry.delete(0, "end")
         self.t.setdefault("items", []).append(model.new_item(text))
         if model.is_done(self.t, self.day):  # a new open item means the task isn't finished
             model.set_done(self.t, self.day, False)
@@ -238,33 +245,45 @@ class TaskCard(ttk.Frame):
             items.remove(item)
             self.panel.structural()
 
+    def _live_card(self):
+        """This task's card as shown now: saving other edits may have rebuilt the panel."""
+        return self.panel.cards.get(self.t["id"], self)
+
     def click_check(self):
-        key = (self.t["id"], self.day)
-        if key in self.panel.animating:
+        panel, key = self.panel, (self.t["id"], self.day)
+        if key in panel.animating:
             return
-        self.panel.commit_all()
+        panel.animating.add(key)  # before saving other edits, so that save doesn't rebuild the panel
+        panel.commit_all()
         ticking = not model.is_done(self.t, self.day)
-        self.panel.animating.add(key)
 
         def finished():
-            self.panel.animating.discard(key)
-            self.panel.app.toggle_done(self.t, self.day, ticking)
-        TickAnimation(self.check, self.check.box, None, theme.ACCENT, theme.DONE, finished, ticking).start()
+            panel.animating.discard(key)
+            panel.app.toggle_done(self.t, self.day, ticking)
+        check = self._live_card().check
+        TickAnimation(check, check.box, None, theme.ACCENT, theme.DONE, finished, ticking).start()
 
     def click_item(self, iid):
+        panel = self.panel
         item = next((i for i in self.t.get("items", []) if i["id"] == iid), None)
         key = (self.t["id"], self.day, iid)
-        if item is None or key in self.panel.animating:
+        if item is None or key in panel.animating:
             return
-        self.panel.commit_all()
+        panel.animating.add(key)
+        panel.commit_all()
+        if item not in self.t.get("items", []):  # removed by the edit just saved
+            panel.animating.discard(key)
+            return
         ticking = not model.item_done(self.t, item, self.day)
-        self.panel.animating.add(key)
-        box = self.item_checks[iid]
 
         def finished():
-            self.panel.animating.discard(key)
+            panel.animating.discard(key)
             model.set_item_done(self.t, item, self.day, ticking)
-            self.panel.app.changed()
+            panel.app.changed()
+        box = getattr(self._live_card(), "item_checks", {}).get(iid)
+        if box is None:
+            finished()
+            return
         TickAnimation(box, box.box, None, theme.ACCENT, theme.DONE, finished, ticking).start()
 
     def expand(self):
@@ -299,6 +318,7 @@ class DayPanel(Dialog):
         self.cards, self.expanded, self.animating = {}, {}, set()
         self._editors, self._own, self._pending, self._rebuilding = [], False, False, False
         self._todo, self._build_job = [], None
+        self.add_drafts = {}  # task id -> text typed in its add-item box, kept across rebuilds
         self.bg = ttk.Style(self).lookup("TFrame", "background") or self.cget("bg")
         fam = theme.FAMILY
         self.f_title = tkfont.Font(self, family=fam, size=11, weight="bold")
@@ -434,7 +454,10 @@ class DayPanel(Dialog):
             self.commit_all()
             focus = focus or self._focus()
             top = self.scroll.yview()[0]
-            for card in self.cards.values():
+            for tid, card in self.cards.items():
+                entry = getattr(card, "add_entry", None)
+                if entry is not None and entry.winfo_exists() and entry.get():
+                    self.add_drafts[tid] = entry.get()
                 card.destroy()
             self.cards, self._editors = {}, []
             self._cancel_build()

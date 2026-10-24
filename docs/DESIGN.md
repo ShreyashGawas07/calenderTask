@@ -76,9 +76,11 @@ One process, three threads (Tk, hotkey, tray), no polling. The hotkey and tray
 threads hand actions to Tk with `root.after(0, …)`. The "drop back to the
 wallpaper" check runs every 400 ms, and only while something is raised. Today's glow
 breathes only while you can see it (the calendar raised, or the desktop itself in
-front); otherwise it is drawn steady and checked once a second. Measured with
-`tests/perf_check.py` (CPU cycles over 20 s, 200 tasks): about 0.07 % of one
-core with the glow on, 0.01 % with it off, about 59 MB. The day panel opens in
+front); otherwise it is drawn steady and no timer runs: a Windows foreground-change
+hook (`SetWinEventHook`, delivered through Tk's own message loop, no thread) wakes it
+when another window comes to the front. Measured with `tests/perf_check.py` (CPU
+cycles over 20 s, 200 tasks): about 0.01-0.02 % of one core with the glow on or
+off, about 59 MB. The day panel opens in
 under 0.2 s with 30 detailed tasks: the first cards are built at once, the rest
 just after.
 

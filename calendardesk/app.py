@@ -485,9 +485,13 @@ class App:
     def quit(self):
         for w in self.notes.values():
             w.flush()
+        for v in list(self.views):  # day panels hold typing that is saved on Enter or focus-out
+            if hasattr(v, "commit_all"):
+                v.commit_all()
         self.save()
         if self.hotkey:
             self.hotkey.stop()
         if self.tray:
             self.tray.stop()
+        self.calendar.stop_hooks()
         self.root.destroy()

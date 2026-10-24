@@ -33,8 +33,9 @@ Changes to meet them:
 - **"Drop back to wallpaper" check** (`_settle`) runs on a 400 ms timer **only while** a pinned
   window is raised; it stops once everything is back.
 - **Glow pulses only when visible**: while the calendar is raised, or while the desktop itself
-  (`Progman`/`WorkerW`) is the foreground window. A 1 s check runs only while today's glow is
-  enabled and in view; otherwise the glow is drawn static at full strength and no timer runs.
+  (`Progman`/`WorkerW`) is the foreground window. Otherwise the glow is drawn static at full
+  strength and no timer runs; a foreground-change hook (`winapi.ForegroundHook`) wakes it. If the
+  hook can't be set up, a 1 s check runs instead.
 - **Animations are self-terminating**: each runs a fixed number of frames (~16 ms apart) then stops.
 
 ## 2. Data model
@@ -111,14 +112,21 @@ Understood (case-insensitive, anywhere in the text; recognised words are removed
 
 | Kind | Examples |
 |---|---|
-| Time | `7pm`, `7:30pm`, `7.30 pm`, `19:30`, `at 7` (→ 07:00 *(assumed: 24-hour unless am/pm)*), `noon`, `midnight` |
-| Date | `today`, `tomorrow`/`tmrw`, `day after tomorrow`, weekday names (`mon`, `friday` → next one, today if it's today), `next monday` (→ the one after this week's), `24 oct`, `oct 24`, `24/10`, `24-10-2026`, `1st`, `on the 5th` (→ next 5th) |
+| Time | `7pm`, `7:30pm`, `7.30 pm`, `19:30`, `at 19.00`, `at 7` (→ 07:00 *(assumed: 24-hour unless am/pm)*), `noon`, `midnight`. A bare `2.50` is not a time (a price, a version) |
+| Date | `today`, `tomorrow`/`tmrw`, `day after tomorrow`, weekday names (`mon`, `friday` → next one, today if it's today), `next monday` (→ the one after this week's), `24 oct`, `oct 24`, `24/10`, `24-10-2026`, `2026-11-05`, `1st`, `on the 5th` (→ next 5th) |
 | Repeat | `daily`/`every day`, `weekly`/`every week`, `every monday` / `every mon and thu` (weekly on those days), `monthly`/`every month`, `yearly`/`every year`, `every 2 days` / `every 3 weeks` |
 | Reminder | `remind me` or a trailing `!` → reminder on (needs a time; at the time) |
 
 Rules: if a time is given but no date, the date is the clicked day (quick-add) or today (panel
 add box on today) — i.e. the day the box belongs to. If nothing is recognised, the whole text is the
 title. If parsing would leave an empty title, keep the original text as the title.
+
+Ambiguous forms count only where they are clearly a date, so ordinary words and numbers stay in the
+title: `sat`/`sun` (not `saturday`/`sunday`) and a yearless `24/10` only after `on`, at the very end
+of the text, or with nothing but a time between them and the start or end (`gym sat 7am`,
+`sun 10am brunch`; but `buy sun cream`, `sat with grandma`, `buy 3/4 cup flour` are just text). A
+yearless dash form (`5-11`) needs `on` (`pages 1-12`, `score 3-1` are text). A date that is part of a
+longer run of numbers (`2 3/4`, `1/2/3/4`) is never a date.
 
 ## 6. Tick animation (~350 ms, 20 frames)
 

@@ -191,6 +191,31 @@ _MON = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(
 _ORD = r"(?:st|nd|rd|th)?"
 _L, _R = r"(?<![\w.])", r"(?![\w])(?!\.\w)"  # whole words only: "monday.com" is not Monday
 _UNITS = {"day": "daily", "week": "weekly", "month": "monthly", "year": "yearly"}
+_TIME = r"(?:at\s+)?(?:\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)|\d{1,2}:\d{2}|noon|midnight)|at\s+\d{1,2}(?:[:.]\d{2})?"
+_WORD_WD = ("sat", "sun")  # weekday short forms that are also everyday words ("sun cream", "sat with")
+
+
+def _clearly_a_date(work, m, on):
+    """Ambiguous date words ("sat", "sun", "3/4") count only where they can't be anything else: after
+    "on", at the very end of the text, or with nothing but a time between them and the start or end
+    ("gym sat", "gym sat 7am", "sun 10am brunch"). "buy sun cream" and "buy 3/4 cup flour" stay text."""
+    if on:
+        return True
+    head, tail = work[:m.start()], work[m.end():]
+    if re.fullmatch(rf"\s*(?:(?:{_TIME})\s*)?", tail, re.IGNORECASE):
+        return True
+    return not head.strip() and re.match(rf"\s*(?:{_TIME})(?!\w)", tail, re.IGNORECASE) is not None
+
+
+def _numeric_date(work, m, base):
+    """The date of a d/m, d-m, d/m/y or d-m-y match, or None when it reads as a fraction, range or score.
+    A dash without a year needs "on" ("pages 1-12", "score 3-1"); a slash needs a clear spot."""
+    on, d, sep, mo, y = m.groups()
+    if re.search(r"\d[\s/.-]*$", work[:m.start()]) or re.match(r"[/.-]\d", work[m.end():]):
+        return None  # part of a longer run of numbers: "2 3/4", "1/2/3/4"
+    if not y and not (on if sep == "-" else _clearly_a_date(work, m, on)):
+        return None
+    return _day_month(base, int(d), int(mo), int(y) if y else None)
 
 
 def _wd(name):
@@ -243,12 +268,20 @@ def parse_quick(text, base_day):
     flags = re.IGNORECASE
     labels = {}
 
-    def take(pattern):
+    def take(pattern, ok=lambda m: True):
+        """Remove the first match that `ok` accepts from the text, and return it."""
         nonlocal work
-        m = re.search(_L + pattern + _R, work, flags)
-        if m:
-            work = work[:m.start()] + " " + work[m.end():]
-        return m
+        for m in re.finditer(_L + pattern + _R, work, flags):
+            if ok(m):
+                work = work[:m.start()] + " " + work[m.end():]
+                return m
+        return None
+
+    def iso(m):
+        try:
+            return date(*map(int, m.group(2, 3, 4)))
+        except ValueError:
+            return None
 
     # reminder
     remind = bool(take(r"remind\s+me"))
@@ -280,10 +313,11 @@ def parse_quick(text, base_day):
         day = base_day
     elif m := take(rf"(?:on\s+)?next\s+{_WD}"):
         day = _upcoming(base_day, _wd(m.group(1))) + timedelta(7)
-    elif m := re.search(_L + r"(?:on\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?" + _R, work, flags):
-        day = _day_month(base_day, int(m.group(1)), int(m.group(2)), int(m.group(3)) if m.group(3) else None)
-        if day:
-            take(re.escape(m.group(0).strip()))
+    elif m := take(r"(?:(on)\s+)?(\d{4})-(\d{1,2})-(\d{1,2})", iso):  # 2026-11-05, as TaskDialog accepts
+        day = iso(m)
+    elif m := take(r"(?:(on)\s+)?(\d{1,2})([/-])(\d{1,2})(?:\3(\d{4}|\d{2}))?",
+                   lambda m: _numeric_date(work, m, base_day)):
+        day = _day_month(base_day, int(m.group(2)), int(m.group(4)), int(m.group(5)) if m.group(5) else None)
     elif m := re.search(_L + rf"(?:on\s+)?(?:the\s+)?(\d{{1,2}}){_ORD}\s+(?:of\s+)?{_MON}(?:\s+(\d{{4}}))?" + _R,
                         work, flags):
         day = _day_month(base_day, int(m.group(1)), _mon(m.group(2)), int(m.group(3)) if m.group(3) else None)
@@ -297,8 +331,9 @@ def parse_quick(text, base_day):
         day = _nth_of_month(base_day, int(m.group(1)))
         if day:
             take(re.escape(m.group(0).strip()))
-    elif m := take(rf"(?:on\s+)?{_WD}"):
-        day = _upcoming(base_day, _wd(m.group(1)))
+    elif m := take(rf"(?:(on)\s+)?{_WD}",
+                   lambda m: m.group(2).lower() not in _WORD_WD or _clearly_a_date(work, m, m.group(1))):
+        day = _upcoming(base_day, _wd(m.group(2)))
     if day is None and out["weekdays"]:
         day = min(_upcoming(base_day, d) for d in out["weekdays"])  # first occurrence
     elif day is not None:
@@ -310,8 +345,8 @@ def parse_quick(text, base_day):
         h, mi = int(m.group(1)), int(m.group(2) or 0)
         h = h % 12 + (12 if m.group(3).lower() == "pm" else 0)
         out["time"] = f"{h:02d}:{mi:02d}"
-    elif m := take(r"(?:at\s+)?([01]?\d|2[0-3])[:.]([0-5]\d)"):
-        out["time"] = f"{int(m.group(1)):02d}:{m.group(2)}"
+    elif m := take(r"(?:(at)\s+)?([01]?\d|2[0-3])([:.])([0-5]\d)", lambda m: m.group(1) or m.group(3) == ":"):
+        out["time"] = f"{int(m.group(2)):02d}:{m.group(4)}"  # "2.50" alone is a price, not a time
     elif m := take(r"at\s+([01]?\d|2[0-3])"):
         out["time"] = f"{int(m.group(1)):02d}:00"
     elif m := take(r"(?:at\s+)?(noon|midnight)"):

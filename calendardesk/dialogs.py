@@ -241,6 +241,8 @@ class TaskDialog(Dialog):
         })
         if rule_changed:
             t["done_dates"], t["skip_dates"] = [], []
+            for item in t.get("items", []):
+                item["done_dates"] = []
         if self.task is None:
             self.app.add_task(t)
         else:

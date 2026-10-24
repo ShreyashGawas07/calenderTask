@@ -76,6 +76,8 @@ class Store:
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())  # on disk before it replaces data.json, so a power cut can't leave it empty
         os.replace(tmp, self.path)
 
     def backup(self, today=None):

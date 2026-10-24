@@ -22,15 +22,27 @@ def _split_bold(text):
     return "".join(plain), spans
 
 
+def list_number(line, prev):
+    """The list number that starts `line`, or None. A list starts at 1 and goes on from the line
+    above (`prev`: its number, or None), so "2024. was a good year" is plain text, not item 2024."""
+    m = NUMBER.match(line)
+    if not m:
+        return None
+    n = int(m.group(1))
+    # n == prev: a line Enter just inserted into a list, renumbered right after
+    return n if n == 1 or (prev is not None and n in (prev, prev + 1)) else None
+
+
 def parse_lines(md):
     """Markdown subset -> [(kind, text, bold_spans)] with kind 'bullet', 'number' or 'plain'."""
-    lines = []
+    lines, prev = [], None
     for line in md.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        kind = "plain"
+        kind, num = "plain", None
         if line.startswith(("- ", BULLET_SHOWN)):
             kind, line = "bullet", line[2:]
-        elif m := NUMBER.match(line):
-            kind, line = "number", line[m.end():]
+        elif (num := list_number(line, prev)) is not None:
+            kind, line = "number", line[NUMBER.match(line).end():]
+        prev = num
         text, spans = _split_bold(line)
         lines.append((kind, text, spans))
     return lines
@@ -102,9 +114,10 @@ class RichNote(tk.Text):
 
     def dump(self):
         lines = []
+        kinds = self._kinds()
         for row in range(1, self._rows() + 1):
             line = self.get(f"{row}.0", f"{row}.end")
-            kind, start = self._kind(line)
+            kind, start = kinds[row - 1]
             spans = []
             for a, b in self._bold_ranges(row):
                 a, b = max(a, start), b
@@ -116,17 +129,19 @@ class RichNote(tk.Text):
     # -- formatting commands ------------------------------------------------------
     def toggle_bullet(self):
         rows = self._selected_rows()
-        on = all(self._kind(self._line(r))[0] == "bullet" for r in rows)
+        kinds = self._kinds()  # read before changing: a line's kind depends on the line above
+        on = all(kinds[r - 1][0] == "bullet" for r in rows)
         for r in rows:
-            self._set_prefix(r, "" if on else BULLET_SHOWN)
+            self._set_prefix(r, "" if on else BULLET_SHOWN, kinds[r - 1][1])
         self._renumber()
         self._changed_now()
 
     def toggle_number(self):
         rows = self._selected_rows()
-        on = all(self._kind(self._line(r))[0] == "number" for r in rows)
+        kinds = self._kinds()  # read before changing: a line's kind depends on the line above
+        on = all(kinds[r - 1][0] == "number" for r in rows)
         for r in rows:
-            self._set_prefix(r, "" if on else "1. ")
+            self._set_prefix(r, "" if on else "1. ", kinds[r - 1][1])
         self._renumber()
         self._changed_now()
 
@@ -143,7 +158,7 @@ class RichNote(tk.Text):
         """Enter: continue a list (and renumber), or end it when the current item is empty."""
         row = int(self.index("insert").split(".")[0])
         line = self._line(row)
-        kind, start = self._kind(line)
+        kind, start = self._kind(row)
         if kind == "plain":
             self.insert("insert", "\n")
         elif not line[start:].strip():
@@ -161,13 +176,23 @@ class RichNote(tk.Text):
     def _line(self, row):
         return self.get(f"{row}.0", f"{row}.end")
 
-    @staticmethod
-    def _kind(line):
-        if line.startswith(BULLET_SHOWN) or line.startswith("- "):
-            return "bullet", 2
-        if m := NUMBER.match(line):
-            return "number", m.end()
-        return "plain", 0
+    def _kinds(self, last=None):
+        """(kind, prefix length) of each line up to row `last` (default: all)."""
+        out, prev = [], None
+        for row in range(1, (last or self._rows()) + 1):
+            line = self._line(row)
+            num = None
+            if line.startswith(BULLET_SHOWN) or line.startswith("- "):
+                out.append(("bullet", 2))
+            elif (num := list_number(line, prev)) is not None:
+                out.append(("number", NUMBER.match(line).end()))
+            else:
+                out.append(("plain", 0))
+            prev = num
+        return out
+
+    def _kind(self, row):
+        return self._kinds(row)[-1]
 
     def _bold_ranges(self, row):
         """Bold column ranges on one line."""
@@ -190,8 +215,9 @@ class RichNote(tk.Text):
             a = b = int(self.index("insert").split(".")[0])
         return range(a, min(b, self._rows()) + 1)
 
-    def _set_prefix(self, row, prefix):
-        _, start = self._kind(self._line(row))
+    def _set_prefix(self, row, prefix, start=None):
+        if start is None:
+            _, start = self._kind(row)
         self.delete(f"{row}.0", f"{row}.{start}")
         if prefix:
             self.insert(f"{row}.0", prefix)
@@ -199,20 +225,21 @@ class RichNote(tk.Text):
         self._style_line(row)
 
     def _renumber(self):
-        n = 0
+        n, prev = 0, None
         for row in range(1, self._rows() + 1):
             line = self._line(row)
-            m = NUMBER.match(line)
-            if not m:
+            prev = list_number(line, prev)
+            if prev is None:
                 n = 0
                 continue
             n += 1
+            m = NUMBER.match(line)
             if m.group(1) != str(n):
                 self.delete(f"{row}.0", f"{row}.{len(m.group(1))}")
                 self.insert(f"{row}.0", str(n))
 
     def _style_line(self, row):
-        kind, _ = self._kind(self._line(row))
+        kind, _ = self._kind(row)
         if kind == "plain":
             self.tag_remove("list", f"{row}.0", f"{row}.end+1c")
         else:

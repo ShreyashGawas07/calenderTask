@@ -14,6 +14,9 @@ def _sheet(wb, title, header, rows, widths):
         cell.fill = PatternFill("solid", fgColor="2A4A5C")
     for r in rows:
         ws.append(r)
+        for cell in ws[ws.max_row]:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.data_type = "s"  # text typed by the user, never a formula
     for i, w in enumerate(widths):
         ws.column_dimensions[chr(65 + i)].width = w
     ws.freeze_panes = "A2"

@@ -27,6 +27,12 @@ user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_uint, ct
 user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.PostThreadMessageW.argtypes = [wintypes.DWORD, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 kernel32.CreateMutexW.restype = wintypes.HANDLE
+WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG,
+                                  wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+user32.SetWinEventHook.restype = wintypes.HANDLE
+user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WINEVENTPROC,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 
 GWLP_HWNDPARENT = -8
@@ -35,6 +41,7 @@ HWND_TOP, HWND_BOTTOM, HWND_TOPMOST, HWND_NOTOPMOST = 0, 1, -1, -2
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x1, 0x2, 0x4000
 WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
+EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT = 0x0003, 0x0000
 ERROR_ALREADY_EXISTS = 183
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "CalendarDesk"
@@ -111,6 +118,48 @@ def desktop_is_foreground():
     buf = ctypes.create_unicode_buffer(32)
     user32.GetClassNameW(user32.GetForegroundWindow(), buf, 32)
     return buf.value in ("Progman", "WorkerW")
+
+
+class ForegroundHook:
+    """Calls `on_change()` (soon after, from Tk's event loop) whenever a window comes to the front, so
+    nothing has to poll for it. Set up from the Tk thread: the out-of-context events then arrive through
+    Tk's own message loop, so this adds no thread. `handle` is None if it couldn't be set up.
+
+    The event arrives nested inside Tk's event processing, where calling tkinter would wreck its saved
+    Python thread state and crash the interpreter. So the hook only asks Tcl, through its C API, to run
+    `after 0 <on_change>`; tkinter then makes that call the normal way."""
+    TCL_EVAL_GLOBAL = 0x20000
+
+    def __init__(self, widget, on_change):
+        self.handle = None
+        try:
+            tcl = ctypes.CDLL(f"tcl{widget.tk.call('info', 'tclversion').replace('.', '')}t")
+        except OSError:
+            return
+        tcl.Tcl_EvalEx.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+        tcl.Tcl_SaveInterpState.restype = ctypes.c_void_p
+        tcl.Tcl_SaveInterpState.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        tcl.Tcl_RestoreInterpState.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        tcl.Tcl_InterpDeleted.argtypes = [ctypes.c_void_p]
+        interp = widget.tk.interpaddr()
+        self._command = widget.register(on_change)
+        script = f"after 0 {self._command}".encode()
+        self._widget = widget
+
+        def fire(*args):
+            if self.handle and not tcl.Tcl_InterpDeleted(interp):
+                state = tcl.Tcl_SaveInterpState(interp, 0)  # it may arrive in the middle of a Tk command
+                tcl.Tcl_EvalEx(interp, script, -1, self.TCL_EVAL_GLOBAL)
+                tcl.Tcl_RestoreInterpState(interp, state)
+        self._proc = WINEVENTPROC(fire)  # kept referenced while hooked
+        self.handle = user32.SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None,
+                                             self._proc, 0, 0, WINEVENT_OUTOFCONTEXT) or None
+
+    def stop(self):
+        if self.handle:
+            user32.UnhookWinEvent(self.handle)
+            self.handle = None
+            self._widget.deletecommand(self._command)
 
 
 class HotkeyThread(threading.Thread):

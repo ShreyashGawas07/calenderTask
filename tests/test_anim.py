@@ -64,6 +64,15 @@ class TickAnimationTests(unittest.TestCase):
         pump(self.root, 400)  # must not raise
         self.assertFalse(a.running)
 
+    def test_start_on_destroyed_canvas_finishes(self):
+        c = tk.Canvas(self.root)
+        calls = []
+        a = TickAnimation(c, (2, 2, 16, 16), None, "#4dabf7", "#888888", lambda: calls.append(1))
+        c.destroy()
+        a.start()  # must not raise
+        self.assertEqual(calls, [1])
+        self.assertFalse(a.running)
+
 
 class CalendarClickTests(unittest.TestCase):
     def test_double_click_on_check_during_animation_toggles_once(self):
@@ -89,6 +98,31 @@ class CalendarClickTests(unittest.TestCase):
             self.assertEqual(model.progress(t, today), (3, 3))
         finally:
             app.quit()
+
+    def test_hidden_glow_waits_for_foreground_change(self):
+        """EXTRA-3: with nobody looking, the glow stops checking; a foreground change wakes it."""
+        from unittest import mock
+        from calendardesk import winapi
+        from calendardesk.app import App
+        store = Store(tempfile.mkdtemp(prefix="cd-test-"))
+        store.settings["hotkey"] = "K"
+        app = App(store, tray=False)
+        try:
+            cal = app.calendar
+            pump(app.root, 300)
+            self.assertTrue(cal.glow)
+            self.assertTrue(cal._fg_hook.handle)
+            cal.front = False
+            with mock.patch.object(winapi, "desktop_is_foreground", return_value=False):
+                cal._pulse()
+                self.assertIsNone(cal._pulse_job)  # nothing scheduled: no polling while hidden
+            with mock.patch.object(winapi, "desktop_is_foreground", return_value=True):
+                cal._foreground_changed()
+                pump(app.root, 50)
+                self.assertIsNotNone(cal._pulse_job)  # breathing again
+        finally:
+            app.quit()
+        self.assertIsNone(cal._fg_hook.handle)
 
     def test_progress_count_is_drawn(self):
         from calendardesk.app import App

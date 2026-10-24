@@ -50,6 +50,14 @@ class TickAnimation:
 
     def start(self):
         self.running = True
+        try:
+            self._create_items()
+        except tk.TclError:  # the canvas is already gone: finish at once so on_done still runs
+            self._finish()
+            return
+        self._step()
+
+    def _create_items(self):
         x0, y0, x1, y1 = self.box
         c = self.c
         self._items["fill"] = c.create_rectangle(x0, y0, x1, y1, fill=self.accent, width=0, tags=(TAG, self.tag))
@@ -62,7 +70,6 @@ class TickAnimation:
             self._items["strike"] = c.create_line(tb[0], mid, tb[0], mid, fill=self.done_color, width=1,
                                                   tags=(TAG, self.tag), state="hidden")
             self._text_box = tb
-        self._step()
 
     def _step(self):
         self._job = None

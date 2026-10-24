@@ -26,6 +26,11 @@ class MarkdownTests(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(round_trip(""), "")
 
+    def test_number_that_is_not_a_list_is_kept(self):
+        """BUG-4: only a list the user made (1, then the next number) is renumbered."""
+        for md in ("2024. was a good year", "100. items", "3. third\n4. fourth", "1. a\n2. b\n2024. year"):
+            self.assertEqual(round_trip(md), md)
+
 
 class RichNoteWidgetTests(unittest.TestCase):
     @classmethod
@@ -48,6 +53,26 @@ class RichNoteWidgetTests(unittest.TestCase):
         self.note.load(md)
         self.assertEqual(self.note.dump(), md)
         self.assertEqual(self.note.get("3.0", "3.end"), "• d")
+
+    def test_number_that_is_not_a_list_survives_editing(self):
+        """BUG-4: typing in a note keeps a line's own number."""
+        for md, edited in (("2024. was a good year", "2024. was a good year X"), ("100. items", "100. items X"),
+                           ("3. third\n4. fourth", "3. third X\n4. fourth")):
+            self.note.load(md)
+            self.assertEqual(self.note.get("1.0", "end-1c"), md)
+            self.note.insert("1.end", " X")
+            self.assertEqual(self.note.dump(), edited)
+
+    def test_enter_and_toggle_leave_other_numbers_alone(self):
+        self.note.load("1. a\n2024. year")
+        self.note.mark_set("insert", "1.end")
+        self.note.newline()
+        self.note.insert("insert", "b")
+        self.assertEqual(self.note.dump(), "1. a\n2. b\n2024. year")
+        self.note.load("2024. year")
+        self.note.mark_set("insert", "1.0")
+        self.note.toggle_number()
+        self.assertEqual(self.note.dump(), "1. 2024. year")
 
     def test_toggle_number_on_lines(self):
         self.note.load("x\ny\nz")

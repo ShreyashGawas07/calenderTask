@@ -36,6 +36,7 @@ class DesktopCalendar(PinnedWindow):
         self._task_items = {}    # (task id, day) -> (checkbox item, title item) for the animation
         self._pulse_job = None
         self._glow_steady = True  # rings currently show their full-strength (unanimated) colour
+        self._fg_hook = winapi.ForegroundHook(self.win, self._foreground_changed)
         self.zoom = 1.0
         self._click_job = None
         self.scale = self.win.winfo_fpixels("1i") / 96.0
@@ -272,7 +273,8 @@ class DesktopCalendar(PinnedWindow):
 
     def _pulse(self):
         """Breathe the glow around today, but only while someone can see it (calendar raised or the
-        desktop in front). Otherwise draw it steady and look again in a second; with no glow, stop."""
+        desktop in front). Otherwise draw it steady and wait for the foreground hook to wake it (or,
+        without the hook, look again in a second); with no glow, stop."""
         self._pulse_job = None
         if not self.glow or not self.win.winfo_exists():
             return
@@ -280,12 +282,21 @@ class DesktopCalendar(PinnedWindow):
             wave = 0.5 + 0.5 * math.sin(time.monotonic() * 2 * math.pi / 2.4)
             delay = 80
         else:
-            wave, delay = 1.0, 1000
+            wave, delay = 1.0, None if self._fg_hook.handle else 1000
         if wave != 1.0 or not self._glow_steady:
             for item, strength, fill in self.glow:
                 self.canvas.itemconfigure(item, outline=theme.mix(theme.ACCENT, fill, strength * (0.35 + 0.65 * wave)))
         self._glow_steady = wave == 1.0
-        self._pulse_job = self.win.after(delay, self._pulse)
+        if delay:
+            self._pulse_job = self.win.after(delay, self._pulse)
+
+    def _foreground_changed(self):
+        """Another window came to the front (maybe the desktop): let the glow look again."""
+        if self.glow and not self._pulse_job:
+            self._pulse_job = self.win.after(0, self._pulse)
+
+    def stop_hooks(self):
+        self._fg_hook.stop()
 
     def _button(self, item, action):
         c = self.canvas
